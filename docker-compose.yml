@@ -1,0 +1,17 @@
+# Local dev dependency for the backend.
+# Production uses MongoDB Atlas (PRD 8.2 / 8.11).
+#
+# Redis was removed from this project: OTP and rate-limit counters are held
+# in-process, so MongoDB is the only service the backend needs.
+services:
+  mongo:
+    image: mongo:7
+    container_name: manisha-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:

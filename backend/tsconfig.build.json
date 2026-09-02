@@ -1,0 +1,14 @@
+{
+  // Production build config.
+  //
+  // src/scripts/* are developer tools (seed, smoke, dev-memory) run through tsx
+  // and never executed from dist/. They import dev-only packages such as
+  // mongodb-memory-server, which npm omits when NODE_ENV=production — so
+  // compiling them during a deploy fails on missing type declarations for a
+  // package the server does not need.
+  //
+  // `npm run typecheck` still uses the full tsconfig.json, so those scripts are
+  // type-checked in development where their dependencies are present.
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "dist", "src/scripts/**"]
+}

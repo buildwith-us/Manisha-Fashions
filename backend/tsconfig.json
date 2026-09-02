@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    // TS 6 deprecates this and TS 7 removes it, but it is the only non-breaking
+    // value here: the package is CommonJS (no "type" in package.json), and
+    // "node16"/"nodenext" require an explicit .js extension on every relative
+    // import across the codebase. That migration is deliberate work, not a
+    // config edit — so the deprecation is acknowledged explicitly below rather
+    // than left to surface as an error in every editor.
+    "moduleResolution": "node",
+    // Silences the node10 deprecation until the .js-extension migration is
+    // done. Must be removed — and the migration finished — before TS 7, which
+    // drops node10 resolution outright. Requires TS >= 6.0: on 5.x this value
+    // is rejected with TS5103, which is why the compiler is pinned to ^6.0.3.
+    "ignoreDeprecations": "6.0",
+    "lib": ["ES2022"],
+    "rootDir": "src",
+    "outDir": "dist",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "sourceMap": true,
+    "declaration": false
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

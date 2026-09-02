@@ -1,0 +1,75 @@
+# Render blueprint for the Manisha Fashions backend.
+#
+# Fixes the "Cannot find module .../backend/dist/server.js" deploy failure:
+# `npm start` runs `node dist/server.js`, but dist/ only exists after the
+# TypeScript build. A build command of `npm install` alone never compiles, so
+# the start command had nothing to run.
+#
+# `--include=dev` is deliberate: typescript lives in devDependencies, and npm
+# skips those when NODE_ENV=production, which would break `npm run build`.
+#
+# Secrets are marked `sync: false` — Render prompts for them and stores them in
+# the dashboard. They are never committed here.
+
+services:
+  - type: web
+    name: manisha-fashion-backend
+    env: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # The mobile client calls /api/v1. Change here if you repoint the client.
+      - key: API_PREFIX
+        value: /api/v1
+
+      # ── Required: the service will not boot without these ──
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+
+      # ── Cloudinary: all three, or image upload returns 503 ──
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+
+      # ── Optional: absent means the feature degrades, not that boot fails ──
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      # Which OTP channel to use. Without this it defaults to `console`, which
+      # is refused in production — so setting the MSG91 keys below is NOT
+      # enough on its own, this must be switched to `msg91` as well.
+      - key: OTP_PROVIDER
+        value: console
+
+      # ⚠️ TEMPORARY — comma-separated phones allowed to use the console
+      # provider in production while SMS is not yet live. Their OTP is returned
+      # in the API response, so anyone who knows one of these numbers can sign
+      # in as it. Clear this once OTP_PROVIDER=msg91 works.
+      - key: OTP_TEST_PHONES
+        sync: false
+
+      - key: MSG91_AUTH_KEY
+        sync: false
+      - key: MSG91_SENDER_ID
+        sync: false
+      - key: MSG91_TEMPLATE_ID
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
