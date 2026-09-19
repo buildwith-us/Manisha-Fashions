@@ -1,3 +1,12 @@
+# Dependencies are installed from package-lock.json, never committed.
+#
+# They were tracked previously, which broke deploys: the `build/` and `dist/`
+# rules below also match *inside* node_modules, so packages were committed as
+# hollow shells — package.json and README, with the compiled output and .d.ts
+# files stripped. npm then saw a satisfied lockfile and never repaired them,
+# and tsc failed with "Cannot find module 'google-auth-library'".
+node_modules/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

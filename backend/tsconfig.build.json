@@ -7,8 +7,14 @@
   // compiling them during a deploy fails on missing type declarations for a
   // package the server does not need.
   //
-  // `npm run typecheck` still uses the full tsconfig.json, so those scripts are
-  // type-checked in development where their dependencies are present.
+  // src/__tests__/* are the same story: they import vitest and supertest, which
+  // are devDependencies. A production `npm install` omits those, so compiling
+  // the tests during a deploy fails on "Cannot find module 'vitest'" — for code
+  // that never ships in dist/ anyway.
+  //
+  // `npm run typecheck` still uses the full tsconfig.json, so both the scripts
+  // and the tests are type-checked in development, where their dependencies
+  // are present.
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "dist", "src/scripts/**"]
+  "exclude": ["node_modules", "dist", "src/scripts/**", "src/__tests__/**"]
 }
