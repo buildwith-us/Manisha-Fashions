@@ -2,7 +2,7 @@
   "name": "manisha-fashions-backend",
   "version": "2.0.0",
   "private": true,
-  "description": "Manisha Fashions \u2014 Jewellery Ecommerce API (Node.js + Express + MongoDB)",
+  "description": "Manisha Fashions — Jewellery Ecommerce API (Node.js + Express + MongoDB)",
   "main": "dist/server.js",
   "engines": {
     "node": ">=20"
@@ -47,12 +47,13 @@
     "mongoose": "^8.10.0",
     "morgan": "^1.10.0",
     "multer": "^2.0.0",
+    "nodemailer": "^10.0.10",
     "razorpay": "^2.9.6",
-    "resend": "^6.28.1",
     "typescript": "^6.0.3",
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@types/nodemailer": "^8.0.2",
     "@types/supertest": "^7.2.1",
     "mongodb-memory-server": "^11.2.0",
     "supertest": "^7.2.2",

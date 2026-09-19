@@ -1,16 +1,31 @@
-import { Resend } from 'resend';
+import nodemailer, { type Transporter } from 'nodemailer';
 import { env, emailConfigured, isProduction } from '../config/env';
 import { logger } from '../config/logger';
 
 /**
- * Transactional email via Resend.
+ * Transactional email over Gmail SMTP.
  *
- * In development the key is usually absent; rather than fail the calling flow
- * we log the message and carry on, so the password-reset journey stays
- * testable without a live account. `env.ts` refuses to boot production
- * without the key, so this fallback cannot silently swallow real mail.
+ * In development the credentials are usually absent; rather than fail the
+ * calling flow we log the message and carry on, so the password-reset journey
+ * stays testable without a live mailbox. `env.ts` refuses to boot production
+ * without them, so this fallback cannot silently swallow real mail.
+ *
+ * Gmail caps sending (roughly 500/day on a free account, 2,000 on Workspace).
+ * That is ample for password resets at this volume, but it is a ceiling a
+ * dedicated provider would not have.
  */
-const resend = emailConfigured ? new Resend(env.RESEND_API_KEY) : null;
+const transporter: Transporter | null = emailConfigured
+  ? nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: env.SMTP_USER,
+        // Google prints App Passwords in four groups; the spaces are
+        // presentational and SMTP auth rejects them, so strip them here
+        // rather than relying on whoever fills in .env to do it.
+        pass: env.SMTP_APP_PASSWORD?.replace(/\s+/g, ''),
+      },
+    })
+  : null;
 
 const BRAND = 'Manisha Fashions';
 /** Matches the coral/rose primary used by the app's design system. */
@@ -36,15 +51,17 @@ export async function sendPasswordResetEmail(input: {
   const { to, code, expiresInMinutes } = input;
   const subject = `Reset your ${BRAND} password`;
 
-  if (!resend) {
+  if (!transporter) {
     // Dev-only escape hatch: visible to the developer, never to a user.
     logger.warn(`[email:dev] password reset code for ${to} → ${code}`);
     return { delivered: false };
   }
 
   try {
-    await resend.emails.send({
-      from: env.RESEND_FROM_EMAIL as string,
+    // Gmail overrides any other From with the authenticated account, so the
+    // display name is the only part worth setting here.
+    await transporter.sendMail({
+      from: `${BRAND} <${env.SMTP_USER}>`,
       to,
       subject,
       text: plainTextBody(code, expiresInMinutes),

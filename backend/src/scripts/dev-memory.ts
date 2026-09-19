@@ -87,7 +87,7 @@ async function main(): Promise<void> {
     logger.info('─'.repeat(58));
     logger.info(`In-memory API ready → http://localhost:${env.PORT}${env.API_PREFIX}`);
     logger.info(`Admin sign-in: ${admin.email} / ${env.SEED_ADMIN_PASSWORD}`);
-    logger.info('Password-reset codes are printed here when Resend is unset.');
+    logger.info('Password-reset codes are printed here when SMTP is unset.');
     logger.info('Data is discarded on exit.');
     logger.info('─'.repeat(58));
   });

@@ -85,11 +85,14 @@ const envSchema = z.object({
    */
   GOOGLE_CLIENT_IDS: z.string().default('').transform(csv),
 
-  // ── Transactional email (Resend) ──
-  RESEND_API_KEY: blankable(z.string().optional()),
-  RESEND_FROM_EMAIL: blankable(
-    z.string().email('RESEND_FROM_EMAIL must be an email address').optional(),
-  ),
+  // ── Transactional email (Gmail SMTP via nodemailer) ──
+  SMTP_USER: blankable(z.string().email('SMTP_USER must be an email address').optional()),
+  /**
+   * A Gmail *App Password* (16 characters, usually shown in four groups),
+   * never the account login password. Requires 2-Step Verification on the
+   * account. Spaces are tolerated — Google displays it with them.
+   */
+  SMTP_APP_PASSWORD: blankable(z.string().optional()),
 
   // ── Password reset (email OTP → short-lived token → new password) ──
   /** How long the emailed 6-digit code stays valid. */
@@ -122,20 +125,20 @@ export const isProduction = env.NODE_ENV === 'production';
 export const isDevelopment = env.NODE_ENV === 'development';
 
 export const googleAuthConfigured = env.GOOGLE_CLIENT_IDS.length > 0;
-export const emailConfigured = Boolean(env.RESEND_API_KEY && env.RESEND_FROM_EMAIL);
+export const emailConfigured = Boolean(env.SMTP_USER && env.SMTP_APP_PASSWORD);
 
 /**
  * Features that may run degraded in development but must never ship half-configured.
  *
  * Google sign-in without client ids would accept no token at all, and password
- * reset without Resend would silently drop the email while still telling the
+ * reset without SMTP would silently drop the email while still telling the
  * user one was sent — a worse failure than refusing to boot.
  */
 if (isProduction) {
   const missing: string[] = [];
   if (!googleAuthConfigured) missing.push('GOOGLE_CLIENT_IDS');
-  if (!env.RESEND_API_KEY) missing.push('RESEND_API_KEY');
-  if (!env.RESEND_FROM_EMAIL) missing.push('RESEND_FROM_EMAIL');
+  if (!env.SMTP_USER) missing.push('SMTP_USER');
+  if (!env.SMTP_APP_PASSWORD) missing.push('SMTP_APP_PASSWORD');
   if (missing.length > 0) {
     throw new Error(
       `Invalid environment configuration: ${missing.join(', ')} must be set in production.`,

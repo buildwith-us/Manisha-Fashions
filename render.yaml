@@ -41,10 +41,12 @@ services:
       - key: GOOGLE_CLIENT_IDS
         sync: false
 
-      # ── Resend: required, boot fails without these ──
-      - key: RESEND_API_KEY
+      # ── Gmail SMTP: required, boot fails without these ──
+      # SMTP_APP_PASSWORD is a Gmail App Password and grants full Google
+      # Account access — store it only in Render's dashboard.
+      - key: SMTP_USER
         sync: false
-      - key: RESEND_FROM_EMAIL
+      - key: SMTP_APP_PASSWORD
         sync: false
 
       # Comma-separated admin whitelist, re-checked on every sign-in.

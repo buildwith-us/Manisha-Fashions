@@ -20,4 +20,5 @@ process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES = '5';
 process.env.PASSWORD_RESET_MAX_ATTEMPTS = '5';
 process.env.PASSWORD_RESET_LOCKOUT_MINUTES = '10';
 // Left unset on purpose: email.service falls back to logging, so no network.
-delete process.env.RESEND_API_KEY;
+delete process.env.SMTP_USER;
+delete process.env.SMTP_APP_PASSWORD;
