@@ -39,6 +39,58 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
   res.success({ message: 'Signed out.' });
 });
 
+export const register = asyncHandler(async (req: Request, res: Response) => {
+  const result = await authService.registerWithPassword({
+    email: req.body.email,
+    password: req.body.password,
+    name: req.body.name,
+    accountType: req.body.accountType,
+    context: loginContext(req),
+  });
+  res.success(result);
+});
+
+export const login = asyncHandler(async (req: Request, res: Response) => {
+  const result = await authService.loginWithPassword({
+    email: req.body.email,
+    password: req.body.password,
+    context: loginContext(req),
+  });
+  res.success(result);
+});
+
+export const googleLogin = asyncHandler(async (req: Request, res: Response) => {
+  const result = await authService.loginWithGoogle({
+    idToken: req.body.idToken,
+    context: loginContext(req),
+  });
+  res.success(result);
+});
+
+/**
+ * Always the same response, whether or not the address is registered — this
+ * endpoint must not be usable to enumerate customers (PRD 8.11).
+ */
+export const forgotPassword = asyncHandler(async (req: Request, res: Response) => {
+  await authService.requestPasswordReset({ email: req.body.email, ip: req.ip });
+  res.success({
+    message: "If that email is registered, we've sent a 6-digit code to it.",
+  });
+});
+
+export const verifyResetOtp = asyncHandler(async (req: Request, res: Response) => {
+  const result = await authService.verifyPasswordResetOtp({
+    email: req.body.email,
+    otp: req.body.otp,
+  });
+  res.success(result);
+});
+
+export const resetPassword = asyncHandler(async (req: Request, res: Response) => {
+  await authService.resetPassword({ token: req.body.token, password: req.body.password });
+  res.success({ message: 'Your password has been changed. Please sign in.' });
+});
+
 export const me = asyncHandler(async (req: Request, res: Response) => {
   res.success(await authService.getProfile(req.user!.id));
 });

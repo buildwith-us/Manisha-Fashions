@@ -96,7 +96,8 @@ export function AccountScreen() {
       >
         <View style={[styles.avatar, shadowAccent]}>
           <Text style={styles.avatarText}>
-            {(user.name ?? user.phone).slice(0, 2).toUpperCase()}
+            {/* Google-only accounts have no phone; fall back to the email. */}
+            {(user.name ?? user.phone ?? user.email ?? '?').slice(0, 2).toUpperCase()}
           </Text>
         </View>
         <View style={{ flex: 1 }}>

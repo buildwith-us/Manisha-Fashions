@@ -8,6 +8,15 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
  * Fail-fast environment parsing. PRD 8.11 keeps every secret in .env; this
  * schema is the single place that decides what is required to boot.
  */
+/**
+ * `KEY=` in a .env file arrives as an empty string, not as absent. `.optional()`
+ * only accepts `undefined`, so a blank line on a validated field (an email, a
+ * URL) fails the whole parse and the server refuses to boot — which is exactly
+ * what .env.example produces on a fresh copy. Normalise blanks to undefined.
+ */
+const blankable = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((value) => (value === '' ? undefined : value), schema);
+
 const csv = (value: string) =>
   value
     .split(',')
@@ -68,6 +77,38 @@ const envSchema = z.object({
   TRUST_PROXY: z.string().default('1'),
 
   SEED_ADMIN_PHONE: z.string().default('+919999999999'),
+
+  // ── Google Sign-In ──
+  /**
+   * Accepted `aud` values for a Google ID token, comma-separated.
+   *
+   * Deliberately plural: the Android, iOS and Web OAuth clients each mint
+   * tokens carrying their *own* client id, so a single value would reject
+   * sign-ins from two of the three platforms. `verifyIdToken` takes the list.
+   */
+  GOOGLE_CLIENT_IDS: z.string().default('').transform(csv),
+
+  // ── Transactional email (Resend) ──
+  RESEND_API_KEY: blankable(z.string().optional()),
+  RESEND_FROM_EMAIL: blankable(
+    z.string().email('RESEND_FROM_EMAIL must be an email address').optional(),
+  ),
+
+  // ── Password reset (email OTP → short-lived token → new password) ──
+  /** How long the emailed 6-digit code stays valid. */
+  PASSWORD_RESET_OTP_TTL_MINUTES: z.coerce.number().int().positive().default(10),
+  /**
+   * Life of the token minted once the code is verified. Deliberately short:
+   * it is only carried from the OTP screen to the new-password screen.
+   */
+  PASSWORD_RESET_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().default(5),
+  /** Wrong codes tolerated per email before the lockout below. */
+  PASSWORD_RESET_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  PASSWORD_RESET_LOCKOUT_MINUTES: z.coerce.number().int().positive().default(10),
+  /** Per email *and* per IP, enforced in the reset service (PRD 8.11). */
+  FORGOT_PASSWORD_MAX_PER_HOUR: z.coerce.number().int().positive().default(3),
+  /** Custom URL scheme the reset deep link targets; matches mobile/app.json. */
+  APP_DEEP_LINK_SCHEME: z.string().default('manishafashions'),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -84,6 +125,28 @@ export const env = parsed.data;
 
 export const isProduction = env.NODE_ENV === 'production';
 export const isDevelopment = env.NODE_ENV === 'development';
+
+export const googleAuthConfigured = env.GOOGLE_CLIENT_IDS.length > 0;
+export const emailConfigured = Boolean(env.RESEND_API_KEY && env.RESEND_FROM_EMAIL);
+
+/**
+ * Features that may run degraded in development but must never ship half-configured.
+ *
+ * Google sign-in without client ids would accept no token at all, and password
+ * reset without Resend would silently drop the email while still telling the
+ * user one was sent — a worse failure than refusing to boot.
+ */
+if (isProduction) {
+  const missing: string[] = [];
+  if (!googleAuthConfigured) missing.push('GOOGLE_CLIENT_IDS');
+  if (!env.RESEND_API_KEY) missing.push('RESEND_API_KEY');
+  if (!env.RESEND_FROM_EMAIL) missing.push('RESEND_FROM_EMAIL');
+  if (missing.length > 0) {
+    throw new Error(
+      `Invalid environment configuration: ${missing.join(', ')} must be set in production.`,
+    );
+  }
+}
 
 export const razorpayConfigured = Boolean(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET);
 export const cloudinaryConfigured = Boolean(

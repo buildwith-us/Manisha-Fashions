@@ -62,6 +62,35 @@ export const authApi = {
     deviceId?: string;
   }) => post<AuthResult>('/auth/otp/verify', input),
 
+  register: (input: {
+    email: string;
+    password: string;
+    name?: string;
+    accountType?: 'retail' | 'wholesale';
+    deviceId?: string;
+  }) => post<AuthResult>('/auth/register', input),
+
+  login: (input: { email: string; password: string; deviceId?: string }) =>
+    post<AuthResult>('/auth/login', input),
+
+  /** The Google ID token is verified server-side; the client never decodes it. */
+  google: (input: { idToken: string; deviceId?: string }) =>
+    post<AuthResult>('/auth/google', input),
+
+  /**
+   * Always resolves with the same generic message, registered or not — the
+   * server will not confirm whether an address has an account.
+   */
+  forgotPassword: (email: string) =>
+    post<{ message: string }>('/auth/forgot-password', { email }),
+
+  /** Step 2 of reset — exchanges the emailed code for a short-lived token. */
+  verifyResetOtp: (input: { email: string; otp: string }) =>
+    post<{ resetToken: string; expiresInSeconds: number }>('/auth/verify-reset-otp', input),
+
+  resetPassword: (input: { token: string; password: string }) =>
+    post<{ message: string }>('/auth/reset-password', input),
+
   refresh: (refreshToken: string) => post<AuthResult>('/auth/refresh', { refreshToken }),
 
   logout: (refreshToken: string) => post<{ message: string }>('/auth/logout', { refreshToken }),

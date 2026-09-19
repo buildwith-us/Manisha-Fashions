@@ -50,7 +50,8 @@ export interface JwtRefreshPayload {
 
 export interface AuthenticatedUser {
   id: string;
-  phone: string;
+  /** Absent on Google-only accounts (see user.model.ts). */
+  phone?: string;
   accountType: AccountType;
   wholesaleStatus: WholesaleStatus;
   permissions: string[];

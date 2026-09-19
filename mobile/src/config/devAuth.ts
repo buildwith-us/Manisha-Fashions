@@ -143,6 +143,7 @@ export function resolveDevSession(phone: string, code: string): DevSession | nul
   const user: User = {
     id: userId,
     phone: `+91${digits}`,
+    authProviders: ['otp'],
     name: isAdminPhone ? 'Dev Admin' : undefined,
     accountType: accountType as User['accountType'],
     // Unknown numbers resolve to retail; no wholesale application exists, so

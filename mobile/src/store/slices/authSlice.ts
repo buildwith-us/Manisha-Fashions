@@ -1,4 +1,4 @@
-import { createAsyncThunk, createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import { createAsyncThunk, createSlice, isAnyOf, type PayloadAction } from '@reduxjs/toolkit';
 import * as Device from 'expo-device';
 import { authApi } from '../../api/endpoints';
 import { ApiError } from '../../api/client';
@@ -185,6 +185,100 @@ export const verifyOtp = createAsyncThunk<
   }
 });
 
+/**
+ * Email + password credentials.
+ *
+ * All four thunks persist tokens through `saveTokens` exactly as `verifyOtp`
+ * does, so every sign-in route lands in the same session state.
+ */
+export const registerWithPassword = createAsyncThunk<
+  User,
+  { email: string; password: string; name?: string; accountType?: 'retail' | 'wholesale' },
+  { rejectValue: string }
+>('auth/registerWithPassword', async (input, { rejectWithValue }) => {
+  try {
+    const result = await authApi.register({
+      ...input,
+      deviceId: Device.osInternalBuildId ?? Device.modelId ?? undefined,
+    });
+    await saveTokens(result.accessToken, result.refreshToken);
+    return result.user;
+  } catch (error) {
+    return rejectWithValue(messageFor(error));
+  }
+});
+
+export const loginWithPassword = createAsyncThunk<
+  User,
+  { email: string; password: string },
+  { rejectValue: string }
+>('auth/loginWithPassword', async (input, { rejectWithValue }) => {
+  try {
+    const result = await authApi.login({
+      ...input,
+      deviceId: Device.osInternalBuildId ?? Device.modelId ?? undefined,
+    });
+    await saveTokens(result.accessToken, result.refreshToken);
+    return result.user;
+  } catch (error) {
+    return rejectWithValue(messageFor(error));
+  }
+});
+
+export const loginWithGoogle = createAsyncThunk<User, { idToken: string }, { rejectValue: string }>(
+  'auth/loginWithGoogle',
+  async ({ idToken }, { rejectWithValue }) => {
+    try {
+      const result = await authApi.google({
+        idToken,
+        deviceId: Device.osInternalBuildId ?? Device.modelId ?? undefined,
+      });
+      await saveTokens(result.accessToken, result.refreshToken);
+      return result.user;
+    } catch (error) {
+      return rejectWithValue(messageFor(error));
+    }
+  },
+);
+
+export const requestPasswordReset = createAsyncThunk<string, string, { rejectValue: string }>(
+  'auth/requestPasswordReset',
+  async (email, { rejectWithValue }) => {
+    try {
+      const result = await authApi.forgotPassword(email);
+      return result.message;
+    } catch (error) {
+      return rejectWithValue(messageFor(error));
+    }
+  },
+);
+
+export const verifyResetOtp = createAsyncThunk<
+  { resetToken: string },
+  { email: string; otp: string },
+  { rejectValue: string }
+>('auth/verifyResetOtp', async (input, { rejectWithValue }) => {
+  try {
+    const result = await authApi.verifyResetOtp(input);
+    return { resetToken: result.resetToken };
+  } catch (error) {
+    return rejectWithValue(messageFor(error));
+  }
+});
+
+export const submitPasswordReset = createAsyncThunk<
+  string,
+  { token: string; password: string },
+  { rejectValue: string }
+>('auth/submitPasswordReset', async (input, { rejectWithValue }) => {
+  try {
+    const result = await authApi.resetPassword(input);
+    return result.message;
+  } catch (error) {
+    return rejectWithValue(messageFor(error));
+  }
+});
+
 export const refreshProfile = createAsyncThunk<User>('auth/refreshProfile', async () =>
   authApi.me(),
 );
@@ -360,7 +454,77 @@ const authSlice = createSlice({
       })
       .addCase(deleteAddress.fulfilled, (state, action) => {
         if (state.user) state.user.addresses = action.payload;
-      });
+      })
+
+      // Password and Google sign-in all land in the same signed-in state as
+      // OTP, so the navigator does not need to know which route was taken.
+      .addMatcher(
+        isAnyOf(registerWithPassword.pending, loginWithPassword.pending, loginWithGoogle.pending),
+        (state) => {
+          state.loading = true;
+          state.error = null;
+        },
+      )
+      .addMatcher(
+        isAnyOf(
+          registerWithPassword.fulfilled,
+          loginWithPassword.fulfilled,
+          loginWithGoogle.fulfilled,
+        ),
+        (state, action) => {
+          state.loading = false;
+          state.user = action.payload as User;
+          state.status = 'signedIn';
+          state.pendingPhone = null;
+          state.devCode = null;
+          state.pendingApplication = null;
+        },
+      )
+      .addMatcher(
+        isAnyOf(
+          registerWithPassword.rejected,
+          loginWithPassword.rejected,
+          loginWithGoogle.rejected,
+        ),
+        (state, action) => {
+          state.loading = false;
+          state.error = (action.payload as string) ?? 'Could not sign you in.';
+        },
+      )
+
+      // Reset requests never change session state — only loading and error.
+      .addMatcher(
+        isAnyOf(
+          requestPasswordReset.pending,
+          verifyResetOtp.pending,
+          submitPasswordReset.pending,
+        ),
+        (state) => {
+          state.loading = true;
+          state.error = null;
+        },
+      )
+      .addMatcher(
+        isAnyOf(
+          requestPasswordReset.fulfilled,
+          verifyResetOtp.fulfilled,
+          submitPasswordReset.fulfilled,
+        ),
+        (state) => {
+          state.loading = false;
+        },
+      )
+      .addMatcher(
+        isAnyOf(
+          requestPasswordReset.rejected,
+          verifyResetOtp.rejected,
+          submitPasswordReset.rejected,
+        ),
+        (state, action) => {
+          state.loading = false;
+          state.error = (action.payload as string) ?? 'Something went wrong.';
+        },
+      );
   },
 });
 

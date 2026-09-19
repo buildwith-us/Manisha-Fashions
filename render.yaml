@@ -37,6 +37,20 @@ services:
       - key: JWT_REFRESH_SECRET
         sync: false
 
+      # ── Google Sign-In: required, boot fails without it ──
+      - key: GOOGLE_CLIENT_IDS
+        sync: false
+
+      # ── Resend: required, boot fails without these ──
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        sync: false
+
+      # Must match `expo.scheme` in mobile/app.json.
+      - key: APP_DEEP_LINK_SCHEME
+        value: manishafashions
+
       # ── Cloudinary: all three, or image upload returns 503 ──
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
