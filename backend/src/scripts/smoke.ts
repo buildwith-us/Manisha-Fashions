@@ -47,7 +47,6 @@ async function main(): Promise<void> {
   process.env.API_PREFIX = '/api/v1';
   process.env.JWT_ACCESS_SECRET = 'smoke-test-access-secret-value-0123456789';
   process.env.JWT_REFRESH_SECRET = 'smoke-test-refresh-secret-value-0123456789';
-  process.env.OTP_PROVIDER = 'console';
   process.env.COD_SHIPPING_CHARGE = '5000';
   process.env.PREPAID_SHIPPING_CHARGE = '0';
   process.env.RATE_LIMIT_GENERAL_PER_MIN = '10000';
@@ -91,20 +90,37 @@ async function main(): Promise<void> {
     return { status: response.status, body: body as ApiResponse['body'] };
   }
 
-  /** Full OTP round trip; devCode is returned outside production. */
+  /**
+   * Registers a throwaway email/password account and returns its session plus
+   * the credentials, so a caller that changes the role can sign in again and
+   * pick the change up. Phone+OTP login was removed; these scripts no longer
+   * have a number to key on.
+   */
   async function login(
-    phone: string,
+    label: string,
     accountType: 'retail' | 'wholesale' = 'retail',
-  ): Promise<{ accessToken: string; refreshToken: string; user: any }> {
-    const sent = await call('POST', '/auth/otp/send', { body: { phone } });
-    const code = sent.body.data?.devCode;
-    const verified = await call('POST', '/auth/otp/verify', {
-      body: { phone, code, accountType },
+  ): Promise<{ accessToken: string; refreshToken: string; user: any; email: string; password: string }> {
+    const email = `${label.replace(/[^a-z0-9]/gi, '').toLowerCase()}.${Date.now()}@example.test`;
+    const password = 'SmokeTest123';
+    const registered = await call('POST', '/auth/register', {
+      body: { email, password, accountType },
     });
-    if (!verified.body.data?.accessToken) {
-      throw new Error(`Login failed for ${phone}: ${JSON.stringify(verified.body)}`);
+    if (!registered.body.data?.accessToken) {
+      throw new Error(`Registration failed for ${email}: ${JSON.stringify(registered.body)}`);
     }
-    return verified.body.data;
+    return { ...registered.body.data, email, password };
+  }
+
+  /** Signs an existing account back in — used after a role change. */
+  async function reLogin(
+    email: string,
+    password: string,
+  ): Promise<{ accessToken: string; refreshToken: string; user: any }> {
+    const res = await call('POST', '/auth/login', { body: { email, password } });
+    if (!res.body.data?.accessToken) {
+      throw new Error(`Login failed for ${email}: ${JSON.stringify(res.body)}`);
+    }
+    return res.body.data;
   }
 
   try {
@@ -114,21 +130,23 @@ async function main(): Promise<void> {
     check('health returns 200 with database connected', health.status === 200, health.body);
 
     /* ── Auth ─────────────────────────────────────────────────────────── */
-    section('Authentication (PRD 4.1 / 8.7)');
+    section('Authentication (email + password)');
 
-    const badVerify = await call('POST', '/auth/otp/verify', {
-      body: { phone: '+919000000001', code: '000000' },
+    const badLogin = await call('POST', '/auth/login', {
+      body: { email: 'nobody@example.test', password: 'WrongPass123' },
     });
     check(
-      'wrong/expired OTP returns 401, not 200',
-      badVerify.status === 401,
-      { status: badVerify.status, body: badVerify.body },
+      'unknown email returns 401, not 200',
+      badLogin.status === 401,
+      { status: badLogin.status, body: badLogin.body },
     );
 
-    const sendResult = await call('POST', '/auth/otp/send', { body: { phone: '9812345670' } });
-    check('bare 10-digit number is accepted and normalised', sendResult.status === 200);
+    const forgot = await call('POST', '/auth/forgot-password', {
+      body: { email: 'nobody@example.test' },
+    });
+    check('forgot-password is generic for unknown emails', forgot.status === 200);
 
-    const retail = await login('+919812345671', 'retail');
+    const retail = await login('user9812345671', 'retail');
     check('retail signup issues an access token', Boolean(retail.accessToken));
     check('retail account type is retail', retail.user.accountType === 'retail', retail.user);
 
@@ -145,13 +163,9 @@ async function main(): Promise<void> {
     /* ── Admin + catalog ──────────────────────────────────────────────── */
     section('Catalog & price visibility (PRD 4.2 / 8.4)');
 
-    await User.updateOne({ phone: '+919999999901' }, { $set: { accountType: 'admin' } }, { upsert: true });
-    const adminUser = await User.findOne({ phone: '+919999999901' });
-    if (adminUser) {
-      adminUser.accountType = 'admin';
-      await adminUser.save();
-    }
-    const admin = await login('+919999999901');
+    const adminSeed = await login('admin');
+    await User.updateOne({ email: adminSeed.email }, { $set: { accountType: 'admin' } });
+    const admin = await reLogin(adminSeed.email, adminSeed.password);
     check('admin routed by accountType', admin.user.accountType === 'admin', admin.user);
 
     const categoryResponse = await call('POST', '/products/categories', {
@@ -205,7 +219,7 @@ async function main(): Promise<void> {
     /* ── Wholesale gating ─────────────────────────────────────────────── */
     section('Wholesale approval gate (PRD 4.1 / 4.7)');
 
-    const wholesale = await login('+919812345672', 'wholesale');
+    const wholesale = await login('user9812345672', 'wholesale');
     check(
       'wholesale signup starts pending',
       wholesale.user.wholesaleStatus === 'pending',
@@ -253,8 +267,9 @@ async function main(): Promise<void> {
     /* ── Staff pricing guard ──────────────────────────────────────────── */
     section('Staff vs admin permissions (PRD 8.9)');
 
-    await User.create({ phone: '+919812345673', accountType: 'staff' });
-    const staff = await login('+919812345673');
+    const staffSeed = await login('staff');
+    await User.updateOne({ email: staffSeed.email }, { $set: { accountType: 'staff' } });
+    const staff = await login('user9812345673');
     check('staff account type resolved', staff.user.accountType === 'staff', staff.user);
 
     const staffPriceChange = await call('PATCH', `/products/${productId}`, {
@@ -351,7 +366,7 @@ async function main(): Promise<void> {
     /* ── Order lifecycle ──────────────────────────────────────────────── */
     section('Order lifecycle (PRD 4.5)');
 
-    const otherUser = await login('+919812345674');
+    const otherUser = await login('user9812345674');
     const crossRead = await call('GET', `/orders/${orderId}`, { token: otherUser.accessToken });
     check('a customer cannot read another customer\'s order', crossRead.status === 404, crossRead.body);
 

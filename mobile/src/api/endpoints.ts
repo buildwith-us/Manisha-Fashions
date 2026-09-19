@@ -51,17 +51,6 @@ export const configApi = {
 /* ── Auth (PRD 4.1 / 8.7) ───────────────────────────────────────────────── */
 
 export const authApi = {
-  sendOtp: (phone: string) =>
-    post<{ message: string; expiresInSeconds: number; devCode?: string }>('/auth/otp/send', { phone }),
-
-  verifyOtp: (input: {
-    phone: string;
-    code: string;
-    accountType?: 'retail' | 'wholesale';
-    application?: { businessName?: string; gstNumber?: string; shopProofUrl?: string };
-    deviceId?: string;
-  }) => post<AuthResult>('/auth/otp/verify', input),
-
   register: (input: {
     email: string;
     password: string;

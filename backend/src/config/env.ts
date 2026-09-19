@@ -35,26 +35,6 @@ const envSchema = z.object({
   JWT_ACCESS_TTL: z.string().default('30m'),
   JWT_REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(90),
 
-  OTP_PROVIDER: z.enum(['console', 'msg91']).default('console'),
-  /**
-   * ⚠️ TEST NUMBERS — the only phones allowed to use the console OTP provider
-   * in production, and the only ones whose code is returned in the API
-   * response. Everyone else is refused until a real SMS provider is set up.
-   *
-   * Anyone who knows a number on this list can sign in as it, so keep it to
-   * handsets you control and empty it once MSG91 is live. Comma-separated,
-   * E.164 or bare 10-digit; overrides the built-in default when set.
-   */
-  OTP_TEST_PHONES: z.string().default('').transform(csv),
-  OTP_LENGTH: z.coerce.number().int().min(4).max(8).default(6),
-  OTP_TTL_SECONDS: z.coerce.number().int().positive().default(600),
-  OTP_MAX_SEND_PER_HOUR: z.coerce.number().int().positive().default(5),
-  OTP_MAX_VERIFY_ATTEMPTS: z.coerce.number().int().positive().default(5),
-  OTP_LOCKOUT_SECONDS: z.coerce.number().int().positive().default(900),
-  MSG91_AUTH_KEY: z.string().optional(),
-  MSG91_SENDER_ID: z.string().optional(),
-  MSG91_TEMPLATE_ID: z.string().optional(),
-
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
@@ -71,12 +51,29 @@ const envSchema = z.object({
   CORS_ORIGINS: z.string().default('').transform(csv),
   RATE_LIMIT_GENERAL_PER_MIN: z.coerce.number().int().positive().default(100),
   // Auth endpoints keep a tighter ceiling than the rest of the API. Overridable
-  // so an automated run can lift it; the per-phone OTP quota in the OTP service
-  // is the real abuse control and is unaffected by this value.
+  // so an automated run can lift it. The per-email reset quota in auth.service
+  // is the finer-grained control and is unaffected by this value.
   RATE_LIMIT_AUTH_PER_MIN: z.coerce.number().int().positive().default(20),
   TRUST_PROXY: z.string().default('1'),
 
-  SEED_ADMIN_PHONE: z.string().default('+919999999999'),
+  /**
+   * Emails that always hold the admin role, re-applied on every sign-in.
+   *
+   * The email equivalent of the phone whitelist that phone+OTP login used:
+   * a fresh deployment — or a restored backup — still has a way in without a
+   * manual database edit, and the role cannot be lost by an accidental change
+   * on the accounts screen.
+   *
+   * Treat this as a credential. Anyone who can sign in as a listed address
+   * gets full admin: pricing, every account, every order.
+   */
+  ADMIN_EMAILS: z.string().default('').transform(csv),
+
+  // ── Seed / bootstrap admin ──
+  // Phone+OTP login was removed, so the first admin needs an email credential
+  // or the admin panel is unreachable on a fresh database.
+  SEED_ADMIN_EMAIL: z.string().email().default('admin@manishafashions.in'),
+  SEED_ADMIN_PASSWORD: z.string().min(8).default('ChangeMe123'),
 
   // ── Google Sign-In ──
   /**
@@ -107,8 +104,6 @@ const envSchema = z.object({
   PASSWORD_RESET_LOCKOUT_MINUTES: z.coerce.number().int().positive().default(10),
   /** Per email *and* per IP, enforced in the reset service (PRD 8.11). */
   FORGOT_PASSWORD_MAX_PER_HOUR: z.coerce.number().int().positive().default(3),
-  /** Custom URL scheme the reset deep link targets; matches mobile/app.json. */
-  APP_DEEP_LINK_SCHEME: z.string().default('manishafashions'),
 });
 
 const parsed = envSchema.safeParse(process.env);

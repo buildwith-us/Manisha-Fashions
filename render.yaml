@@ -47,9 +47,9 @@ services:
       - key: RESEND_FROM_EMAIL
         sync: false
 
-      # Must match `expo.scheme` in mobile/app.json.
-      - key: APP_DEEP_LINK_SCHEME
-        value: manishafashions
+      # Comma-separated admin whitelist, re-checked on every sign-in.
+      - key: ADMIN_EMAILS
+        sync: false
 
       # ── Cloudinary: all three, or image upload returns 503 ──
       - key: CLOUDINARY_CLOUD_NAME
@@ -65,25 +65,6 @@ services:
       - key: RAZORPAY_KEY_SECRET
         sync: false
       - key: RAZORPAY_WEBHOOK_SECRET
-        sync: false
-      # Which OTP channel to use. Without this it defaults to `console`, which
-      # is refused in production — so setting the MSG91 keys below is NOT
-      # enough on its own, this must be switched to `msg91` as well.
-      - key: OTP_PROVIDER
-        value: console
-
-      # ⚠️ TEMPORARY — comma-separated phones allowed to use the console
-      # provider in production while SMS is not yet live. Their OTP is returned
-      # in the API response, so anyone who knows one of these numbers can sign
-      # in as it. Clear this once OTP_PROVIDER=msg91 works.
-      - key: OTP_TEST_PHONES
-        sync: false
-
-      - key: MSG91_AUTH_KEY
-        sync: false
-      - key: MSG91_SENDER_ID
-        sync: false
-      - key: MSG91_TEMPLATE_ID
         sync: false
       - key: CORS_ORIGINS
         sync: false

@@ -37,7 +37,7 @@ export async function sendPasswordResetEmail(input: {
   const subject = `Reset your ${BRAND} password`;
 
   if (!resend) {
-    // Mirrors OTP_PROVIDER=console: visible to the developer, never to a user.
+    // Dev-only escape hatch: visible to the developer, never to a user.
     logger.warn(`[email:dev] password reset code for ${to} → ${code}`);
     return { delivered: false };
   }

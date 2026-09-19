@@ -20,7 +20,6 @@ export type AdminTabParamList = {
 export type RootStackParamList = {
   // Auth
   Login: undefined;
-  Otp: undefined;
   WholesalePending: undefined;
   ForgotPassword: undefined;
   /** Entry for the 6-digit code emailed by /auth/forgot-password. */

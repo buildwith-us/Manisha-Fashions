@@ -1,10 +1,9 @@
-import { NavigationContainer, DefaultTheme, type LinkingOptions } from '@react-navigation/native';
-import * as Linking from 'expo-linking';
+import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { LoadingView } from '../components/ui';
 import { LoginScreen } from '../screens/auth/LoginScreen';
-import { OtpScreen } from '../screens/auth/OtpScreen';
 import { ForgotPasswordScreen } from '../screens/auth/ForgotPasswordScreen';
+import { ResetOtpScreen } from '../screens/auth/ResetOtpScreen';
 import { ResetPasswordScreen } from '../screens/auth/ResetPasswordScreen';
 import { WholesalePendingScreen } from '../screens/auth/WholesalePendingScreen';
 import { ProductDetailScreen } from '../screens/customer/ProductDetailScreen';
@@ -30,27 +29,6 @@ import type { RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-/**
- * Deep links. The scheme is declared in app.json (`manishafashions`) and the
- * only external entry point is the password-reset link emailed by the backend:
- *
- *   manishafashions://reset-password?token=…
- *
- * `Linking.createURL('/')` is included so the same route resolves under Expo
- * Go's `exp://` host during development, where the custom scheme is not used.
- */
-const linking: LinkingOptions<RootStackParamList> = {
-  prefixes: ['manishafashions://', Linking.createURL('/')],
-  config: {
-    screens: {
-      ResetPassword: {
-        path: 'reset-password',
-        parse: { token: (value: string) => value },
-      },
-      Login: 'login',
-    },
-  },
-};
 
 const navTheme = {
   ...DefaultTheme,
@@ -85,7 +63,7 @@ export function RootNavigator() {
     user?.accountType === 'wholesale' && user.wholesaleStatus !== 'approved';
 
   return (
-    <NavigationContainer theme={navTheme} ref={navigationRef} linking={linking}>
+    <NavigationContainer theme={navTheme} ref={navigationRef}>
       <PendingIntentRunner />
       <Stack.Navigator
         screenOptions={{
@@ -131,13 +109,16 @@ export function RootNavigator() {
               component={LoginScreen}
               options={{ presentation: 'modal' }}
             />
-            <Stack.Screen name="Otp" component={OtpScreen} options={{ presentation: 'modal' }} />
             <Stack.Screen
               name="ForgotPassword"
               component={ForgotPasswordScreen}
               options={{ presentation: 'modal' }}
             />
-            {/* Deep-link target; also reachable in-app after a reset request. */}
+            <Stack.Screen
+              name="ResetOtp"
+              component={ResetOtpScreen}
+              options={{ presentation: 'modal' }}
+            />
             <Stack.Screen
               name="ResetPassword"
               component={ResetPasswordScreen}

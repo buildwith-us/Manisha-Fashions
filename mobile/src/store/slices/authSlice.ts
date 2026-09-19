@@ -9,8 +9,6 @@ import {
   loadTokens,
   saveTokens,
 } from '../../api/tokenStorage';
-// ⚠️ TEMPORARY DEV AUTH — REMOVE BEFORE PRODUCTION (see src/config/devAuth.ts)
-import { devOtpHintFor, resolveDevSession } from '../../config/devAuth';
 import type { Address, User } from '../../api/types';
 
 /**
@@ -43,21 +41,10 @@ interface AuthState {
   user: User | null;
   /** Set when a gated action bounced to sign-in; replayed on success. */
   pendingIntent: AuthIntent | null;
-  /** Phone awaiting OTP entry, kept so the OTP screen can resend. */
-  pendingPhone: string | null;
+  /** Retail or wholesale, chosen while creating an account. */
   pendingAccountType: 'retail' | 'wholesale';
-  /** Wholesale details typed on the login screen, submitted with the OTP. */
+  /** Wholesale details typed on the signup form, submitted with registration. */
   pendingApplication: { businessName?: string; gstNumber?: string } | null;
-  /** Populated only in development, where the API echoes the OTP back. */
-  devCode: string | null;
-  /**
-   * ⚠️ TEMPORARY DEV AUTH — REMOVE BEFORE PRODUCTION
-   * True only when `sendOtp` could not reach the server and fell back to the
-   * offline bypass. Gates the fake-session path in `verifyOtp` so a reachable
-   * backend always completes the real handshake.
-   */
-  devFallback: boolean;
-  otpExpiresInSeconds: number;
   loading: boolean;
   error: string | null;
 }
@@ -66,12 +53,8 @@ const initialState: AuthState = {
   status: 'booting',
   user: null,
   pendingIntent: null,
-  pendingPhone: null,
   pendingAccountType: 'retail',
   pendingApplication: null,
-  devCode: null,
-  devFallback: false,
-  otpExpiresInSeconds: 0,
   loading: false,
   error: null,
 };
@@ -117,79 +100,11 @@ export const bootstrapSession = createAsyncThunk<User | null>(
   },
 );
 
-export const sendOtp = createAsyncThunk<
-  { phone: string; devCode?: string; expiresInSeconds: number; devFallback: boolean },
-  { phone: string; accountType?: 'retail' | 'wholesale' },
-  { rejectValue: string }
->('auth/sendOtp', async ({ phone }, { rejectWithValue }) => {
-  try {
-    const result = await authApi.sendOtp(phone);
-    // The server issued a real code, so this sign-in must be completed against
-    // the server. devFallback:false is what stops the bypass hijacking it.
-    return {
-      phone,
-      devCode: result.devCode,
-      expiresInSeconds: result.expiresInSeconds,
-      devFallback: false,
-    };
-  } catch (error) {
-    // ⚠️ TEMPORARY DEV AUTH — REMOVE BEFORE PRODUCTION
-    // The real request is always attempted first. Only when it fails AND the
-    // bypass is on do we let the flow continue offline, so the OTP screen is
-    // reachable with no SMS provider and no backend. Delete this block with the
-    // rest of the bypass.
-    const hint = devOtpHintFor(phone);
-    if (hint) return { phone, devCode: hint, expiresInSeconds: 300, devFallback: true };
-
-    return rejectWithValue(messageFor(error));
-  }
-});
-
-export const verifyOtp = createAsyncThunk<
-  User,
-  {
-    phone: string;
-    code: string;
-    accountType?: 'retail' | 'wholesale';
-    application?: { businessName?: string; gstNumber?: string };
-  },
-  { state: { auth: AuthState }; rejectValue: string }
->('auth/verifyOtp', async (input, { getState, rejectWithValue }) => {
-  // ⚠️ TEMPORARY DEV AUTH — REMOVE BEFORE PRODUCTION
-  // Additive only: returns null unless DEV_AUTH_BYPASS is on AND the pair
-  // matches a dev rule, in which case we never reach the real API. Delete this
-  // block and the devAuth import to remove the feature entirely.
-  //
-  // Gated on devFallback: the bypass mints a fake JWT the real server rejects,
-  // so taking it after the server issued a genuine OTP produced a session that
-  // "succeeded" and was then torn down by the first 401 — bouncing the user
-  // back to sign in and forcing a second, real login. It may only run when the
-  // send actually fell back to offline mode.
-  if (getState().auth.devFallback) {
-    const devSession = resolveDevSession(input.phone, input.code);
-    if (devSession) {
-      await saveTokens(devSession.accessToken, devSession.refreshToken);
-      return devSession.user;
-    }
-  }
-
-  try {
-    const result = await authApi.verifyOtp({
-      ...input,
-      deviceId: Device.osInternalBuildId ?? Device.modelId ?? undefined,
-    });
-    await saveTokens(result.accessToken, result.refreshToken);
-    return result.user;
-  } catch (error) {
-    return rejectWithValue(messageFor(error));
-  }
-});
-
 /**
  * Email + password credentials.
  *
- * All four thunks persist tokens through `saveTokens` exactly as `verifyOtp`
- * does, so every sign-in route lands in the same session state.
+ * Both sign-in routes persist tokens through `saveTokens`, so they land in
+ * the same session state.
  */
 export const registerWithPassword = createAsyncThunk<
   User,
@@ -356,13 +271,6 @@ const authSlice = createSlice({
     clearError(state) {
       state.error = null;
     },
-    resetOtpFlow(state) {
-      state.pendingPhone = null;
-      state.devCode = null;
-      state.devFallback = false;
-      state.otpExpiresInSeconds = 0;
-      state.error = null;
-    },
     setPendingAccountType(state, action: PayloadAction<'retail' | 'wholesale'>) {
       state.pendingAccountType = action.payload;
     },
@@ -387,39 +295,6 @@ const authSlice = createSlice({
         state.user = null;
       })
 
-      .addCase(sendOtp.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(sendOtp.fulfilled, (state, action) => {
-        state.loading = false;
-        state.pendingPhone = action.payload.phone;
-        state.devCode = action.payload.devCode ?? null;
-        state.devFallback = action.payload.devFallback;
-        state.otpExpiresInSeconds = action.payload.expiresInSeconds;
-      })
-      .addCase(sendOtp.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload ?? 'Could not send the code.';
-      })
-
-      .addCase(verifyOtp.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(verifyOtp.fulfilled, (state, action) => {
-        state.loading = false;
-        state.user = action.payload;
-        state.status = 'signedIn';
-        state.pendingPhone = null;
-        state.devCode = null;
-        state.pendingApplication = null;
-      })
-      .addCase(verifyOtp.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload ?? 'Could not verify the code.';
-      })
-
       .addCase(refreshProfile.fulfilled, (state, action) => {
         state.user = action.payload;
       })
@@ -428,8 +303,7 @@ const authSlice = createSlice({
         state.status = 'guest';
         state.pendingIntent = null;
         state.user = null;
-        state.pendingPhone = null;
-        state.error = null;
+          state.error = null;
       })
 
       .addCase(applyForWholesale.fulfilled, (state, action) => {
@@ -475,8 +349,6 @@ const authSlice = createSlice({
           state.loading = false;
           state.user = action.payload as User;
           state.status = 'signedIn';
-          state.pendingPhone = null;
-          state.devCode = null;
           state.pendingApplication = null;
         },
       )
@@ -533,7 +405,6 @@ export const {
   setPendingIntent,
   clearPendingIntent,
   clearError,
-  resetOtpFlow,
   setPendingAccountType,
   setPendingApplication,
 } = authSlice.actions;

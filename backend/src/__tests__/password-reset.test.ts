@@ -5,7 +5,7 @@ import { API, resetDb, startTestApp, stopTestApp } from './helpers';
 
 interface ResetEmailInput {
   to: string;
-  resetUrl: string;
+  code: string;
   expiresInMinutes: number;
 }
 
@@ -22,15 +22,20 @@ async function registerAccount() {
   return request(app).post(`${API}/auth/register`).send(ACCOUNT);
 }
 
-/** Pulls the one-time token out of the deep link the email service was handed. */
-function lastResetToken(): string {
+/** The 6-digit code handed to the email service on the most recent send. */
+function lastCode(): string {
   const call = sendPasswordResetEmail.mock.calls.at(-1)?.[0];
   if (!call) throw new Error('No reset email was sent');
-  const token = new URL(
-    call.resetUrl.replace('manishafashions://', 'https://x/'),
-  ).searchParams.get('token');
-  if (!token) throw new Error('Reset link carried no token');
-  return token;
+  return call.code;
+}
+
+/** Walks steps 1–2 and returns the short-lived token from the verify step. */
+async function getResetToken(): Promise<string> {
+  await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
+  const res = await request(app)
+    .post(`${API}/auth/verify-reset-otp`)
+    .send({ email: ACCOUNT.email, otp: lastCode() });
+  return res.body.data.resetToken;
 }
 
 beforeAll(async () => {
@@ -43,6 +48,15 @@ afterEach(async () => {
 });
 
 describe('POST /auth/forgot-password', () => {
+  it('emails a 6-digit code, not a link', async () => {
+    await registerAccount();
+    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
+
+    const call = sendPasswordResetEmail.mock.calls.at(-1)?.[0];
+    expect(call?.code).toMatch(/^\d{6}$/);
+    expect(call).not.toHaveProperty('resetUrl');
+  });
+
   it('gives an identical response for registered and unregistered emails', async () => {
     await registerAccount();
 
@@ -88,13 +102,105 @@ describe('POST /auth/forgot-password', () => {
   });
 });
 
-describe('POST /auth/reset-password', () => {
-  it('accepts a valid token, then signs the user in with the new password', async () => {
+describe('POST /auth/verify-reset-otp', () => {
+  it('accepts the emailed code and returns a reset token', async () => {
     await registerAccount();
     await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
 
+    const res = await request(app)
+      .post(`${API}/auth/verify-reset-otp`)
+      .send({ email: ACCOUNT.email, otp: lastCode() });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.resetToken).toBeTruthy();
+  });
+
+  it('rejects an expired code', async () => {
+    await registerAccount();
+    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
+    const code = lastCode();
+
+    // Wind the stored expiry into the past rather than waiting 10 minutes.
+    const { User } = await import('../models/user.model');
+    await User.updateOne(
+      { email: ACCOUNT.email },
+      { $set: { passwordResetOtpExpiresAt: new Date(Date.now() - 1000) } },
+    );
+
+    const res = await request(app)
+      .post(`${API}/auth/verify-reset-otp`)
+      .send({ email: ACCOUNT.email, otp: code });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('RESET_OTP_EXPIRED');
+  });
+
+  it('counts wrong codes down and locks the email after 5', async () => {
+    await registerAccount();
+    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
+
+    const wrong = (otp: string) =>
+      request(app).post(`${API}/auth/verify-reset-otp`).send({ email: ACCOUNT.email, otp });
+
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      const res = await wrong('000000');
+      expect(res.status).toBe(401);
+      expect(res.body.error.code).toBe('RESET_OTP_INVALID');
+      expect(res.body.error.message).toContain(`${5 - attempt} attempt`);
+    }
+
+    const locked = await wrong('000000');
+    expect(locked.status).toBe(429);
+    expect(locked.body.error.message).toMatch(/locked/i);
+  });
+
+  it('refuses the correct code once the email is locked out', async () => {
+    await registerAccount();
+    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
+    const code = lastCode();
+
+    for (let i = 0; i < 5; i += 1) {
+      await request(app)
+        .post(`${API}/auth/verify-reset-otp`)
+        .send({ email: ACCOUNT.email, otp: '000000' });
+    }
+
+    const res = await request(app)
+      .post(`${API}/auth/verify-reset-otp`)
+      .send({ email: ACCOUNT.email, otp: code });
+    expect(res.status).toBe(429);
+  });
+
+  it('does not reveal whether an unregistered email has a code pending', async () => {
+    const res = await request(app)
+      .post(`${API}/auth/verify-reset-otp`)
+      .send({ email: 'ghost@example.com', otp: '123456' });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('RESET_OTP_EXPIRED');
+  });
+
+  it('consumes the code, so it cannot be verified twice', async () => {
+    await registerAccount();
+    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
+    const code = lastCode();
+
+    await request(app).post(`${API}/auth/verify-reset-otp`).send({ email: ACCOUNT.email, otp: code });
+    const replay = await request(app)
+      .post(`${API}/auth/verify-reset-otp`)
+      .send({ email: ACCOUNT.email, otp: code });
+
+    expect(replay.status).toBe(401);
+  });
+});
+
+describe('POST /auth/reset-password', () => {
+  it('accepts the token from the verify step and swaps the password', async () => {
+    await registerAccount();
+    const token = await getResetToken();
+
     const res = await request(app).post(`${API}/auth/reset-password`).send({
-      token: lastResetToken(),
+      token,
       password: 'Jasmine9000',
     });
     expect(res.status).toBe(200);
@@ -109,10 +215,9 @@ describe('POST /auth/reset-password', () => {
     expect(stale.status).toBe(401);
   });
 
-  it('refuses a token that has already been used', async () => {
+  it('refuses a reset token that has already been used', async () => {
     await registerAccount();
-    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
-    const token = lastResetToken();
+    const token = await getResetToken();
 
     await request(app).post(`${API}/auth/reset-password`).send({ token, password: 'Jasmine9000' });
     const replay = await request(app).post(`${API}/auth/reset-password`).send({
@@ -123,23 +228,20 @@ describe('POST /auth/reset-password', () => {
     expect(replay.status).toBe(400);
   });
 
-  it('refuses an expired token', async () => {
+  it('refuses an expired reset token', async () => {
     await registerAccount();
-    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
-    const token = lastResetToken();
+    const token = await getResetToken();
 
-    // Wind the stored expiry into the past rather than waiting 15 minutes.
     const { User } = await import('../models/user.model');
     await User.updateOne(
       { email: ACCOUNT.email },
-      { $set: { passwordResetExpiresAt: new Date(Date.now() - 1000) } },
+      { $set: { passwordResetTokenExpiresAt: new Date(Date.now() - 1000) } },
     );
 
     const res = await request(app).post(`${API}/auth/reset-password`).send({
       token,
       password: 'Jasmine9000',
     });
-
     expect(res.status).toBe(400);
     expect(res.body.error.message).toMatch(/expired/i);
   });
@@ -156,9 +258,9 @@ describe('POST /auth/reset-password', () => {
     const registered = await registerAccount();
     const oldRefresh = registered.body.data.refreshToken;
 
-    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
+    const token = await getResetToken();
     await request(app).post(`${API}/auth/reset-password`).send({
-      token: lastResetToken(),
+      token,
       password: 'Jasmine9000',
     });
 

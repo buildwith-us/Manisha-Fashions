@@ -10,25 +10,6 @@ function loginContext(req: Request) {
   };
 }
 
-export const sendOtp = asyncHandler(async (req: Request, res: Response) => {
-  const result = await authService.requestOtp(req.body.phone);
-  res.success({
-    message: 'A verification code has been sent to your mobile number.',
-    ...result,
-  });
-});
-
-export const verifyOtp = asyncHandler(async (req: Request, res: Response) => {
-  const result = await authService.verifyOtpAndLogin({
-    phone: req.body.phone,
-    code: req.body.code,
-    accountType: req.body.accountType,
-    application: req.body.application,
-    context: loginContext(req),
-  });
-  res.success(result);
-});
-
 export const refresh = asyncHandler(async (req: Request, res: Response) => {
   const result = await authService.refreshSession(req.body.refreshToken, loginContext(req));
   res.success(result);

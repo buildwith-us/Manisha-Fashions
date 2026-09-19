@@ -12,8 +12,10 @@ type Nav = NativeStackNavigationProp<RootStackParamList, 'ResetPassword'>;
 type ResetRoute = RouteProp<RootStackParamList, 'ResetPassword'>;
 
 /**
- * Step 2 of password reset, reached from the emailed deep link
- * `manishafashions://reset-password?token=…`.
+ * Step 3 of password reset — choose the new password.
+ *
+ * The token is a route param handed over by the code screen, so it never
+ * leaves the app; it is short-lived and single-use.
  *
  * Mirrors the backend rule so the user is told before submitting, not after:
  * at least 8 characters, with a letter and a number.
@@ -29,6 +31,7 @@ export function ResetPasswordScreen() {
   const [touched, setTouched] = useState(false);
 
   const token = params?.token ?? '';
+
   const strongEnough = password.length >= 8 && /[A-Za-z]/.test(password) && /\d/.test(password);
   const matches = password === confirm;
   const canSubmit = Boolean(token) && strongEnough && matches;
@@ -48,9 +51,9 @@ export function ResetPasswordScreen() {
     return (
       <Screen scroll>
         <View style={styles.header}>
-          <Text style={styles.title}>This link isn't valid</Text>
+          <Text style={styles.title}>This request isn't valid</Text>
           <Text style={styles.subtitle}>
-            Reset links expire after 15 minutes and can only be used once. Please request a new one.
+            Reset codes expire after 10 minutes and can only be used once. Please start again.
           </Text>
         </View>
         <Button label="Back to sign in" onPress={() => navigation.navigate('Login')} />

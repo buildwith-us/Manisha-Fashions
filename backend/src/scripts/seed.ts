@@ -147,15 +147,23 @@ async function seed(): Promise<void> {
   }
   logger.info(`Seeded ${PRODUCTS.length} products`);
 
+  // Phone+OTP login is gone, so the bootstrap admin needs a real credential:
+  // without one, a fresh database has no way into the admin panel at all.
+  const { hashPassword } = await import('../services/password.service');
   const admin = await User.findOneAndUpdate(
-    { phone: env.SEED_ADMIN_PHONE },
+    { email: env.SEED_ADMIN_EMAIL },
     {
       $set: { accountType: 'admin', wholesaleStatus: 'none', isActive: true },
-      $setOnInsert: { name: 'Store Admin' },
+      $setOnInsert: {
+        name: 'Store Admin',
+        passwordHash: await hashPassword(env.SEED_ADMIN_PASSWORD),
+        authProviders: ['password'],
+      },
     },
     { new: true, upsert: true },
   );
-  logger.info(`Admin account ready: ${admin.phone} (sign in with OTP — no password)`);
+  logger.info(`Admin account ready: ${admin.email}`);
+  logger.warn('Sign in with SEED_ADMIN_PASSWORD and change it immediately.');
 
   await disconnectDatabase();
   logger.info('Seed complete.');

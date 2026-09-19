@@ -1,10 +1,6 @@
 import { z } from 'zod';
 import { objectId, phoneNumber } from './common';
 
-export const sendOtpSchema = z.object({
-  phone: phoneNumber,
-});
-
 const wholesaleApplication = z.object({
   businessName: z.string().trim().min(2).max(120).optional(),
   // PRD 6 — whether document upload is mandatory is still an open item, so the
@@ -16,18 +12,6 @@ const wholesaleApplication = z.object({
     .regex(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/, 'Enter a valid GSTIN')
     .optional(),
   shopProofUrl: z.string().url().optional(),
-});
-
-export const verifyOtpSchema = z.object({
-  phone: phoneNumber,
-  code: z
-    .string()
-    .trim()
-    .regex(/^\d{4,8}$/, 'Enter the code from your SMS'),
-  // Only retail or wholesale — admin and staff roles are never client-assignable.
-  accountType: z.enum(['retail', 'wholesale']).default('retail'),
-  application: wholesaleApplication.optional(),
-  deviceId: z.string().max(120).optional(),
 });
 
 export const refreshSchema = z.object({

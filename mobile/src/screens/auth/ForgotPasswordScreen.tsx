@@ -1,59 +1,48 @@
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Button, ErrorBanner, Input, Screen } from '../../components/ui';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { requestPasswordReset } from '../../store/slices/authSlice';
 import { colors, spacing, typography } from '../../theme';
+import type { RootStackParamList } from '../../navigation/types';
 
 /**
- * Step 1 of password reset.
+ * Step 1 of password reset — ask for the email, send a 6-digit code.
  *
- * The confirmation is deliberately non-committal and shown for *every*
- * address: the server will not say whether an account exists, and neither
- * will this screen, or the pair together would leak it anyway.
+ * Moving straight to the code screen for *every* address is deliberate: the
+ * server will not say whether an account exists, so stopping here only for
+ * registered ones would leak exactly what the generic response protects.
  */
 export function ForgotPasswordScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList, 'ForgotPassword'>>();
   const dispatch = useAppDispatch();
   const { loading, error } = useAppSelector((state) => state.auth);
 
   const [email, setEmail] = useState('');
   const [touched, setTouched] = useState(false);
-  const [sent, setSent] = useState(false);
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
   const handleSubmit = async () => {
     setTouched(true);
     if (!emailValid) return;
-    const result = await dispatch(requestPasswordReset(email.trim().toLowerCase()));
+    const normalised = email.trim().toLowerCase();
+    const result = await dispatch(requestPasswordReset(normalised));
     // Rejection here is a transport or rate-limit failure, never "no such
-    // account" — the banner shows those, the generic notice shows the rest.
-    if (requestPasswordReset.fulfilled.match(result)) setSent(true);
+    // account" — the banner shows those.
+    if (requestPasswordReset.fulfilled.match(result)) {
+      navigation.navigate('ResetOtp', { email: normalised });
+    }
   };
-
-  if (sent) {
-    return (
-      <Screen scroll>
-        <View style={styles.header}>
-          <Text style={styles.title}>Check your email</Text>
-          <Text style={styles.subtitle}>
-            If that email is registered, we've sent a reset link to it. The link expires in 15
-            minutes.
-          </Text>
-        </View>
-        <Button label="Back to sign in" onPress={() => navigation.goBack()} />
-      </Screen>
-    );
-  }
 
   return (
     <Screen scroll>
       <View style={styles.header}>
         <Text style={styles.title}>Reset your password</Text>
         <Text style={styles.subtitle}>
-          Enter the email on your account and we'll send you a link to choose a new password.
+          Enter the email on your account. If it's registered, we'll send a 6-digit code to it.
         </Text>
       </View>
 
@@ -73,7 +62,7 @@ export function ForgotPasswordScreen() {
       />
 
       <Button
-        label="Send reset link"
+        label="Send code"
         onPress={handleSubmit}
         loading={loading}
         disabled={!emailValid}

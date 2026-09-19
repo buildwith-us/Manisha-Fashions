@@ -16,9 +16,7 @@ import {
   registerSchema,
   resetPasswordSchema,
   verifyResetOtpSchema,
-  sendOtpSchema,
   updateProfileSchema,
-  verifyOtpSchema,
 } from '../validators/auth.validator';
 
 const router = Router();
@@ -29,8 +27,6 @@ const router = Router();
  */
 
 // ── Public (PRD 8.7) ──
-router.post('/otp/send', validate({ body: sendOtpSchema }), authLimiter, authController.sendOtp);
-router.post('/otp/verify', validate({ body: verifyOtpSchema }), authLimiter, authController.verifyOtp);
 router.post('/refresh', validate({ body: refreshSchema }), authLimiter, authController.refresh);
 router.post('/logout', validate({ body: logoutSchema }), authController.logout);
 
