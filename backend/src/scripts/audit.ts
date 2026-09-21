@@ -37,7 +37,6 @@ async function main(): Promise<void> {
   process.env.API_PREFIX = '/api/v1';
   process.env.JWT_ACCESS_SECRET = 'audit-test-access-secret-value-0123456789';
   process.env.JWT_REFRESH_SECRET = 'audit-test-refresh-secret-value-0123456789';
-  process.env.OTP_PROVIDER = 'console';
   process.env.COD_SHIPPING_CHARGE = '5000';
   process.env.PREPAID_SHIPPING_CHARGE = '0';
   process.env.RATE_LIMIT_GENERAL_PER_MIN = '100000';
@@ -83,30 +82,47 @@ async function main(): Promise<void> {
     return { status: response.status, body: body as ApiResponse['body'] };
   }
 
+  /**
+   * Registers a throwaway email/password account and returns its session plus
+   * the credentials, so a caller that changes the role can sign in again and
+   * pick the change up. Phone+OTP login was removed; these scripts no longer
+   * have a number to key on.
+   */
   async function login(
-    phone: string,
+    label: string,
     accountType: 'retail' | 'wholesale' = 'retail',
-    application?: Record<string, string>,
-  ): Promise<{ accessToken: string; refreshToken: string; user: any }> {
-    const sent = await call('POST', '/auth/otp/send', { body: { phone } });
-    const code = sent.body.data?.devCode;
-    const verified = await call('POST', '/auth/otp/verify', {
-      body: { phone, code, accountType, ...(application ? { application } : {}) },
+  ): Promise<{ accessToken: string; refreshToken: string; user: any; email: string; password: string }> {
+    const email = `${label.replace(/[^a-z0-9]/gi, '').toLowerCase()}.${Date.now()}@example.test`;
+    const password = 'SmokeTest123';
+    const registered = await call('POST', '/auth/register', {
+      body: { email, password, accountType },
     });
-    if (!verified.body.data?.accessToken) {
-      throw new Error(`Login failed for ${phone}: ${JSON.stringify(verified.body)}`);
+    if (!registered.body.data?.accessToken) {
+      throw new Error(`Registration failed for ${email}: ${JSON.stringify(registered.body)}`);
     }
-    return verified.body.data;
+    return { ...registered.body.data, email, password };
+  }
+
+  /** Signs an existing account back in — used after a role change. */
+  async function reLogin(
+    email: string,
+    password: string,
+  ): Promise<{ accessToken: string; refreshToken: string; user: any }> {
+    const res = await call('POST', '/auth/login', { body: { email, password } });
+    if (!res.body.data?.accessToken) {
+      throw new Error(`Login failed for ${email}: ${JSON.stringify(res.body)}`);
+    }
+    return res.body.data;
   }
 
   try {
     /* ── Set up an admin and a retail customer ────────────────────────── */
-    const admin = await login('+919999900001');
-    await User.updateOne({ phone: '+919999900001' }, { $set: { accountType: 'admin' } });
-    const adminSession = await login('+919999900001');
+    const adminSeed = await login('admin');
+    await User.updateOne({ email: adminSeed.email }, { $set: { accountType: 'admin' } });
+    const adminSession = await reLogin(adminSeed.email, adminSeed.password);
     const adminToken = adminSession.accessToken;
 
-    const retail = await login('+919812300001');
+    const retail = await login('user9812300001');
     const retailToken = retail.accessToken;
 
     /* ── /config ──────────────────────────────────────────────────────── */
@@ -345,9 +361,12 @@ async function main(): Promise<void> {
 
     /* ── Admin: wholesale approvals (AdminWholesaleScreen) ─────────────── */
     section('Wholesale application + approval');
-    const ws = await login('+919812300055', 'wholesale', {
-      businessName: 'Audit Traders',
-      gstNumber: '24AAAAA0000A1Z5',
+    const ws = await login('user9812300055', 'wholesale');
+    // Registration carries accountType; the business details go through the
+    // dedicated apply endpoint rather than riding along with the credentials.
+    await call('POST', '/auth/wholesale/apply', {
+      token: ws.accessToken,
+      body: { businessName: 'Audit Traders', gstNumber: '24AAAAA0000A1Z5' },
     });
     check('wholesale signup succeeds', Boolean(ws.accessToken), ws.user);
     check('wholesale starts pending', ws.user.wholesaleStatus === 'pending', ws.user);
@@ -375,7 +394,7 @@ async function main(): Promise<void> {
     check('admin can approve an application', approve.status === 200, approve.body);
     check('status becomes approved', approve.body.data?.wholesaleStatus === 'approved', approve.body.data);
 
-    const wsSession = await login('+919812300055', 'wholesale');
+    const wsSession = await login('user9812300055', 'wholesale');
     const wsProducts = await call('GET', '/products', { token: wsSession.accessToken });
     check('an approved wholesaler can browse', wsProducts.status === 200, wsProducts.body);
     check(
@@ -393,7 +412,7 @@ async function main(): Promise<void> {
 
     /* ── Admin: order detail (AdminOrderDetailScreen) ──────────────────── */
     section('Admin order views');
-    const retail2 = await login('+919812300001');
+    const retail2 = await login('user9812300001');
     await call('POST', '/auth/addresses', {
       token: retail2.accessToken,
       body: {
@@ -489,9 +508,10 @@ async function main(): Promise<void> {
 
     /* ── Staff restrictions (PRD 8.9) ──────────────────────────────────── */
     section('Staff permission boundaries');
-    await login('+919812300077');
-    await User.updateOne({ phone: '+919812300077' }, { $set: { accountType: 'staff' } });
-    const staff = await login('+919812300077');
+    await login('user9812300077');
+    const staffSeed = await login('staff');
+    await User.updateOne({ email: staffSeed.email }, { $set: { accountType: 'staff' } });
+    const staff = await login('user9812300077');
 
     const staffPrice = await call('PATCH', `/products/${p1Id}`, {
       token: staff.accessToken,
@@ -549,18 +569,18 @@ async function main(): Promise<void> {
       return ((res.body.data ?? []) as Array<{ name: string }>).map((entry) => entry.name);
     };
 
-    // A fresh retail buyer on an otherwise-unused number: +919812300077 is the
-    // staff account created earlier, and staff see every storefront by design.
-    const buyer = await login('+919812300123');
+    // A fresh retail buyer on its own account: the staff account created
+    // earlier sees every storefront by design and would mask the check.
+    const buyer = await login('user9812300123');
     const buyerToken = buyer.accessToken;
 
     // An approved trade buyer, created fresh so its status is unambiguous.
-    const trade = await login('+919812300088', 'wholesale');
+    const trade = await login('user9812300088', 'wholesale');
     await call('POST', `/admin/wholesale/${trade.user.id}/review`, {
       token: adminToken,
       body: { decision: 'approved' },
     });
-    const tradeSession = await login('+919812300088', 'wholesale');
+    const tradeSession = await login('user9812300088', 'wholesale');
 
     const guestNames = await namesFor();
     check('guest sees the "both" product', guestNames.includes('Visibility Both'), guestNames);
@@ -695,7 +715,7 @@ async function main(): Promise<void> {
     check('the updated rating replaces the old one', afterEdit.body.data?.summary?.average === 3, afterEdit.body.data);
 
     // A different customer adds a second review; the average moves.
-    const other = await login('+919812300124');
+    const other = await login('user9812300124');
     await call('POST', `/products/${revProdId}/reviews`, {
       token: other.accessToken,
       body: { rating: 5 },

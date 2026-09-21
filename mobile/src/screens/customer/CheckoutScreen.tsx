@@ -13,7 +13,13 @@ import {
   SectionLabel,
   SelectionMark,
 } from '../../components/ui';
-import { configApi, productApi, type StoreConfig } from '../../api/endpoints';
+import {
+  configApi,
+  orderApi,
+  productApi,
+  type CodOptions,
+  type StoreConfig,
+} from '../../api/endpoints';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { checkout, clearError, fetchCart } from '../../store/slices/cartSlice';
 import { fetchAddresses } from '../../store/slices/authSlice';
@@ -28,7 +34,12 @@ type Route = RouteProp<RootStackParamList, 'Checkout'>;
 /**
  * PRD 4.3 / 4.4 — order summary, address selection, and payment method.
  * Three grouped decisions and one total: Razorpay orders ship free, COD adds
- * the flat shipping charge the server owns.
+ * the shipping charge the server owns for the delivery state.
+ *
+ * COD is priced per state, so the charge is fetched for the *selected address*
+ * rather than read from a single store-wide setting, and the option disappears
+ * entirely in a state where the store has switched COD off. None of that is
+ * trusted: checkout re-derives both on the server from the saved address.
  *
  * Two sources feed the same screen. Without params it checks out the saved
  * cart. With `buyNow` it orders a single product and never touches the cart —
@@ -50,6 +61,11 @@ export function CheckoutScreen() {
   /** Settled either way — `config === null` alone cannot tell loading from failed. */
   const [configLoaded, setConfigLoaded] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('razorpay');
+
+  /* COD for the selected address's state. `null` while it is being fetched or
+     when the server does not price COD per state, in which case the screen
+     falls back to the single default charge in `config`. */
+  const [codOptions, setCodOptions] = useState<CodOptions | null>(null);
 
   /* The one product a Buy-now checkout is ordering. Its price comes from the
      API at the buyer's tier — this screen never computes money, it only adds
@@ -103,10 +119,67 @@ export function CheckoutScreen() {
   const selectedAddress = addresses.find((entry) => entry.isDefault) ?? addresses[0];
   const selectedAddressId = selectedAddress?.id ?? null;
 
+  /*
+     COD is priced by the delivery state, so this re-runs whenever the chosen
+     address changes — coming back from "Change" with a Maharashtra address
+     must not keep quoting the Kerala charge.
+
+     A server that does not price COD per state (`codPerStateSupported`
+     absent) is left on the store-wide default rather than being asked a
+     question it cannot answer. A failed request does the same: the default
+     charge may be wrong for the state, but the server prices the order either
+     way, so the worst case is a summary that corrects itself on the order
+     confirmation rather than a checkout that cannot proceed.
+  */
+  useEffect(() => {
+    if (!selectedAddressId || !configLoaded) return;
+    if (config?.codPerStateSupported !== true) {
+      setCodOptions(null);
+      return;
+    }
+
+    let cancelled = false;
+    setCodOptions(null);
+    orderApi
+      .codOptions(selectedAddressId)
+      .then((result) => {
+        if (!cancelled) setCodOptions(result);
+      })
+      .catch(() => {
+        if (!cancelled) setCodOptions(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAddressId, configLoaded, config?.codPerStateSupported]);
+
+  /*
+     Whether COD may be offered at all. Unknown counts as available: the option
+     is only withdrawn on a definite "no" from the server, so a slow or failed
+     lookup does not silently remove a payment method the customer can use.
+  */
+  const codAvailable = codOptions ? codOptions.codEnabled : true;
+
+  /** The COD charge for this address, falling back to the store default. */
+  const codCharge = codOptions?.codCharge ?? config?.codShippingCharge ?? 0;
+
+  /*
+     COD can go away under the customer — they pick an address in a state where
+     the store does not offer it, or Razorpay comes back. Moving the selection
+     rather than leaving it on a hidden option is what stops "Place order" from
+     submitting a method that is no longer on screen.
+  */
+  useEffect(() => {
+    if (!codAvailable && paymentMethod === 'cod' && config?.razorpayEnabled) {
+      setPaymentMethod('razorpay');
+    }
+  }, [codAvailable, paymentMethod, config?.razorpayEnabled]);
+
   const shippingCharge = useMemo(() => {
     if (!config) return 0;
-    return paymentMethod === 'cod' ? config.codShippingCharge : config.prepaidShippingCharge;
-  }, [config, paymentMethod]);
+    return paymentMethod === 'cod' ? codCharge : config.prepaidShippingCharge;
+  }, [config, paymentMethod, codCharge]);
 
   const subtotal = buyNow
     ? buyNowProduct
@@ -250,14 +323,25 @@ export function CheckoutScreen() {
               note={config && !config.razorpayEnabled ? 'Unavailable' : 'Free'}
               noteTone={config && !config.razorpayEnabled ? 'muted' : 'success'}
             />
-            <PaymentOption
-              selected={paymentMethod === 'cod'}
-              onPress={() => setPaymentMethod('cod')}
-              title="Cash on delivery"
-              subtitle="Pay the courier on arrival"
-              note={config ? `+${formatPaise(config.codShippingCharge)}` : undefined}
-            />
+            {/* A state where the store has switched COD off does not show the
+                option greyed out — it does not show it at all, leaving pay
+                online as the one way to place the order. */}
+            {codAvailable ? (
+              <PaymentOption
+                selected={paymentMethod === 'cod'}
+                onPress={() => setPaymentMethod('cod')}
+                title="Cash on delivery"
+                subtitle="Pay the courier on arrival"
+                note={config ? `+${formatPaise(codCharge)}` : undefined}
+              />
+            ) : null}
           </Group>
+
+          {!codAvailable && codOptions ? (
+            <Text style={styles.paymentNote}>
+              Cash on delivery isn't available for deliveries to {codOptions.state}.
+            </Text>
+          ) : null}
         </View>
 
         <View style={styles.block}>
@@ -306,7 +390,12 @@ export function CheckoutScreen() {
           label={paymentMethod === 'cod' ? 'Place order' : 'Pay now'}
           onPress={handlePlaceOrder}
           loading={placingOrder}
-          disabled={!selectedAddressId || !hasSomethingToOrder}
+          /* COD withdrawn while it was the only method — Razorpay is off too —
+             leaves nothing to place the order with. The server would refuse it
+             anyway; blocking here says so before the customer taps. */
+          disabled={
+            !selectedAddressId || !hasSomethingToOrder || (paymentMethod === 'cod' && !codAvailable)
+          }
         />
       </View>
     </Screen>
@@ -400,6 +489,13 @@ const styles = StyleSheet.create({
   optionTitle: { ...typography.bodyStrong, color: colors.text },
   optionSubtitle: { ...typography.caption, color: colors.textFaint, marginTop: 3 },
   optionFree: { ...typography.captionStrong, color: colors.success },
+  paymentNote: {
+    ...typography.caption,
+    color: colors.textFaint,
+    lineHeight: 18,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.xs,
+  },
   optionNote: { ...typography.caption, color: colors.textFaint },
 
   summaryCard: { paddingHorizontal: spacing.xl, borderRadius: radius.lg, backgroundColor: colors.surface },

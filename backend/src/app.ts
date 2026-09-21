@@ -48,7 +48,8 @@ export function createApp(): Application {
     }),
   );
   app.use(compression());
-  app.use(morgan(isProduction ? 'combined' : 'dev'));
+  // Request logs would drown the assertions in test output.
+  if (env.NODE_ENV !== 'test') app.use(morgan(isProduction ? 'combined' : 'dev'));
 
   /**
    * Stand-in product photography (PRD 8.3 says images belong in Cloudinary).

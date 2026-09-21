@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as adminController from '../controllers/admin.controller';
+import * as codController from '../controllers/cod.controller';
 import * as orderController from '../controllers/order.controller';
 import { authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/authorize';
@@ -7,9 +8,11 @@ import { writeLimiter } from '../middleware/rateLimiter';
 import { validate } from '../middleware/validate';
 import { objectIdParam } from '../validators/common';
 import {
+  codStateParam,
   reviewWholesaleSchema,
   setActiveSchema,
   setRoleSchema,
+  upsertCodStateSchema,
   userListQuery,
   wholesaleListQuery,
 } from '../validators/admin.validator';
@@ -88,6 +91,32 @@ router.patch(
   writeLimiter,
   requirePermission(PERMISSIONS.USER_MANAGE),
   adminController.setActive,
+);
+
+/* ── COD settings — admin only (PRD 4.4 / 6) ────────────────────────────── */
+
+// Admin, not staff: this sets what a customer pays and whether they can order
+// on COD at all, which sits with pricing rather than with order handling.
+router.get(
+  '/cod-config',
+  requirePermission(PERMISSIONS.COD_CONFIG_MANAGE),
+  codController.list,
+);
+
+router.put(
+  '/cod-config/:state',
+  validate({ params: codStateParam, body: upsertCodStateSchema }),
+  writeLimiter,
+  requirePermission(PERMISSIONS.COD_CONFIG_MANAGE),
+  codController.upsert,
+);
+
+router.delete(
+  '/cod-config/:state',
+  validate({ params: codStateParam }),
+  writeLimiter,
+  requirePermission(PERMISSIONS.COD_CONFIG_MANAGE),
+  codController.remove,
 );
 
 export default router;

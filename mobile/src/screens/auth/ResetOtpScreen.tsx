@@ -1,86 +1,61 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { CommonActions, useNavigation } from '@react-navigation/native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Button, ErrorBanner, InfoBanner, NavBar, Screen } from '../../components/ui';
+import { Button, ErrorBanner, NavBar, Screen } from '../../components/ui';
 import { PressableScale } from '../../components/motion';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { clearError, resetOtpFlow, sendOtp, verifyOtp } from '../../store/slices/authSlice';
-// ⚠️ TEMPORARY DEV AUTH — REMOVE BEFORE PRODUCTION (see src/config/devAuth.ts)
-import { devOtpHintFor } from '../../config/devAuth';
+import { clearError, requestPasswordReset, verifyResetOtp } from '../../store/slices/authSlice';
 import { colors, radius, spacing, typography } from '../../theme';
 import type { RootStackParamList } from '../../navigation/types';
 
+type Nav = NativeStackNavigationProp<RootStackParamList, 'ResetOtp'>;
+
 const OTP_LENGTH = 6;
-const RESEND_SECONDS = 30;
+/**
+ * The backend allows 3 reset emails per hour, so a 30-second cooldown would
+ * invite the user to burn the whole quota in 90 seconds and then be stuck for
+ * the rest of the hour. 60s paces three requests across three minutes and
+ * still leaves the limit as the real ceiling.
+ */
+const RESEND_SECONDS = 60;
 
 /**
- * PRD 4.1 / 8.7 — OTP entry. On success the session token is stored and the
- * user is not asked again until logout, reinstall, or idle expiry — which is
- * what the note under the boxes promises.
+ * Step 2 of password reset — enter the 6-digit code from the email.
+ *
+ * Six boxes over one hidden input, the same pattern the phone-OTP screen used,
+ * so one-time-code autofill still works. The code arrives by email rather than
+ * SMS, hence `oneTimeCode` without the `sms-otp` hint.
  */
-export function OtpScreen() {
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList, 'Otp'>>();
+export function ResetOtpScreen() {
+  const navigation = useNavigation<Nav>();
+  const { params } = useRoute<RouteProp<RootStackParamList, 'ResetOtp'>>();
   const dispatch = useAppDispatch();
-  const { pendingPhone, pendingAccountType, pendingApplication, devCode, loading, error } =
-    useAppSelector((state) => state.auth);
+  const { loading, error } = useAppSelector((state) => state.auth);
 
+  const inputRef = useRef<TextInput>(null);
   const [code, setCode] = useState('');
   const [secondsLeft, setSecondsLeft] = useState(RESEND_SECONDS);
-  const inputRef = useRef<TextInput>(null);
+
+  const email = params.email;
+  const isSubmittable = (value: string) => value.length === OTP_LENGTH;
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setSecondsLeft((current) => (current > 0 ? current - 1 : 0));
-    }, 1000);
+    if (secondsLeft <= 0) return;
+    const timer = setInterval(() => setSecondsLeft((current) => current - 1), 1000);
     return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    // Dev convenience: the API echoes the code back outside production.
-    if (devCode) setCode(devCode);
-  }, [devCode]);
-
-  // ⚠️ TEMPORARY DEV AUTH — REMOVE BEFORE PRODUCTION
-  // The dev codes are 4 digits while a real OTP is 6, so submission accepts
-  // either: a full-length real code, or an exact match on the dev code. Real
-  // 6-digit entry is unaffected, and devHint is null whenever the flag is off.
-  const devHint = pendingPhone ? devOtpHintFor(pendingPhone) : null;
-  const isSubmittable = (value: string) =>
-    value.length === OTP_LENGTH || (devHint !== null && value === devHint);
+  }, [secondsLeft]);
 
   const submit = async (value: string) => {
-    if (!pendingPhone || !isSubmittable(value)) return;
-    const result = await dispatch(
-      verifyOtp({
-        phone: pendingPhone,
-        code: value,
-        accountType: pendingAccountType,
-        application: pendingApplication ?? undefined,
-      }),
-    );
-
-    // Staff and blocked-wholesale accounts swap the whole stack, which unmounts
-    // this modal on its own. A retail or approved-wholesale customer stays in
-    // the customer stack, so the Otp + Login modals have to be dismissed to put
-    // them back on the screen they came from — with their action replayed by
-    // PendingIntentRunner.
-    //
-    // The modals are filtered out by name rather than popped by count:
-    // PendingIntentRunner navigates as soon as `status` flips to signedIn,
-    // which happens before this line runs, so a fixed pop(2) raced that
-    // navigation and left the user on the Login screen to dismiss by hand.
-    if (verifyOtp.fulfilled.match(result)) {
-      navigation.dispatch((state) => {
-        const routes = state.routes.filter(
-          (route) => route.name !== 'Login' && route.name !== 'Otp',
-        );
-        // Nothing left to drop, or nothing to do — leave the stack untouched.
-        if (routes.length === 0 || routes.length === state.routes.length) {
-          return CommonActions.reset(state);
-        }
-        return CommonActions.reset({ ...state, routes, index: routes.length - 1 });
-      });
+    if (!isSubmittable(value)) return;
+    const result = await dispatch(verifyResetOtp({ email, otp: value }));
+    if (verifyResetOtp.fulfilled.match(result)) {
+      // The token is short-lived and single-use, so it is handed straight to
+      // the next screen rather than parked in the store.
+      navigation.replace('ResetPassword', { token: result.payload.resetToken });
+    } else {
+      // A rejected code stays on screen otherwise, inviting a blind re-submit.
+      setCode('');
     }
   };
 
@@ -92,39 +67,26 @@ export function OtpScreen() {
   };
 
   const handleResend = async () => {
-    if (!pendingPhone || secondsLeft > 0) return;
+    if (secondsLeft > 0) return;
     setCode('');
     setSecondsLeft(RESEND_SECONDS);
-    await dispatch(sendOtp({ phone: pendingPhone, accountType: pendingAccountType }));
+    await dispatch(requestPasswordReset(email));
   };
 
-  const handleBack = () => {
-    dispatch(resetOtpFlow());
-    navigation.goBack();
-  };
-
-  // The code field autofocuses, so the keyboard is already up on arrival and
-  // would otherwise sit over "Verify & continue". No `scroll` alongside it: the
-  // body is flex:1 with the button pinned beneath, and making that scrollable
-  // would break the layout rather than help it.
   return (
     <Screen tone="plain" edges={['top', 'bottom']} keyboardAvoiding>
-      <NavBar onBack={handleBack} />
+      <NavBar onBack={() => navigation.goBack()} />
 
       <View style={styles.body}>
         <Text style={styles.heading}>Enter the code</Text>
         <Text style={styles.subheading}>
-          Sent to <Text style={styles.subheadingStrong}>{pendingPhone ?? 'your number'}</Text>.{' '}
-          <Text style={styles.link} onPress={handleBack}>
+          Sent to <Text style={styles.subheadingStrong}>{email}</Text>.{' '}
+          <Text style={styles.link} onPress={() => navigation.goBack()}>
             Change
           </Text>
         </Text>
 
         {error ? <ErrorBanner message={error} /> : null}
-
-        {devCode ? (
-          <InfoBanner message={`Development mode — code auto-filled: ${devCode}`} tone="warning" />
-        ) : null}
 
         <PressableScale onPress={() => inputRef.current?.focus()} style={styles.boxes}>
           {Array.from({ length: OTP_LENGTH }).map((_, index) => {
@@ -141,14 +103,12 @@ export function OtpScreen() {
           })}
         </PressableScale>
 
-        {/* A single hidden input backs the six boxes so SMS autofill works. */}
         <TextInput
           ref={inputRef}
           value={code}
           onChangeText={handleChange}
           keyboardType="number-pad"
           textContentType="oneTimeCode"
-          autoComplete="sms-otp"
           maxLength={OTP_LENGTH}
           autoFocus
           style={styles.hiddenInput}
@@ -167,7 +127,8 @@ export function OtpScreen() {
 
         <View style={styles.note}>
           <Text style={styles.noteText}>
-            You'll only do this once. The app stays signed in until you log out or change device.
+            The code expires in 10 minutes. After five wrong attempts this email is locked for a
+            short while.
           </Text>
         </View>
       </View>

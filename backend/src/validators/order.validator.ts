@@ -18,6 +18,11 @@ export const checkoutSchema = z.object({
     .optional(),
 });
 
+/** The address whose state decides what COD costs — the customer's own. */
+export const codOptionsQuery = z.object({
+  addressId: objectId,
+});
+
 export const confirmPaymentSchema = z.object({
   orderId: objectId,
   razorpayPaymentId: z.string().min(4),

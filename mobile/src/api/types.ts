@@ -41,9 +41,14 @@ export interface Address {
   isDefault: boolean;
 }
 
+export type AuthProvider = 'otp' | 'password' | 'google';
+
 export interface User {
   id: string;
-  phone: string;
+  /** Absent on Google-only accounts, which never supply a number. */
+  phone?: string;
+  /** Credentials this account can sign in with. */
+  authProviders: AuthProvider[];
   name?: string;
   email?: string;
   accountType: AccountType;

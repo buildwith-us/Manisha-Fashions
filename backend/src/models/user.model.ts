@@ -19,11 +19,30 @@ export interface IAddress {
   isDefault: boolean;
 }
 
+export type AuthProvider = 'otp' | 'password' | 'google';
+
 export interface IUser extends Document<Types.ObjectId> {
   _id: Types.ObjectId;
-  phone: string;
+  /**
+   * Optional since Google sign-in: Google returns email/name/sub and never a
+   * phone number. OTP accounts still key on it, so the index is sparse-unique
+   * rather than dropped — two accounts can be phone-less, never phone-equal.
+   */
+  phone?: string;
   name?: string;
   email?: string;
+  /** bcrypt hash; `select: false`, so it never rides along on an ordinary read. */
+  passwordHash?: string;
+  /** Google's stable `sub` claim, not the email — the email can change. */
+  googleId?: string;
+  /** Every credential this account can sign in with; order is not meaningful. */
+  authProviders: AuthProvider[];
+  /** bcrypt hash of the emailed 6-digit code (low entropy → slow hash). */
+  passwordResetOtpHash?: string;
+  passwordResetOtpExpiresAt?: Date;
+  /** SHA-256 of the short-lived token issued once the code is verified. */
+  passwordResetTokenHash?: string;
+  passwordResetTokenExpiresAt?: Date;
   accountType: AccountType;
   wholesaleStatus: WholesaleStatus;
   /** Wholesale application details — PRD 6 flags document upload as optional/TBC. */
@@ -64,14 +83,30 @@ const userSchema = new Schema<IUser>(
   {
     phone: {
       type: String,
-      required: true,
+      // Google accounts have none. `sparse` keeps uniqueness for the accounts
+      // that do have one while allowing many documents to omit it entirely —
+      // a plain unique index would collide on the second null.
       unique: true,
+      sparse: true,
       trim: true,
       // Stored in E.164 (e.g. +919876543210) so lookups are unambiguous.
       match: /^\+[1-9]\d{7,14}$/,
     },
     name: { type: String, trim: true, maxlength: 80 },
-    email: { type: String, trim: true, lowercase: true, maxlength: 160 },
+    // Unique now that it is a login credential and the key Google links on.
+    email: { type: String, trim: true, lowercase: true, maxlength: 160, unique: true, sparse: true },
+    passwordHash: { type: String, select: false },
+    googleId: { type: String, unique: true, sparse: true },
+    authProviders: {
+      type: [String],
+      enum: ['otp', 'password', 'google'],
+      default: ['otp'],
+    },
+    // Only hashes are stored: a leaked database cannot be used to reset accounts.
+    passwordResetOtpHash: { type: String, select: false },
+    passwordResetOtpExpiresAt: { type: Date, select: false },
+    passwordResetTokenHash: { type: String, select: false },
+    passwordResetTokenExpiresAt: { type: Date, select: false },
     accountType: { type: String, enum: ACCOUNT_TYPES, default: 'retail', required: true },
     wholesaleStatus: { type: String, enum: WHOLESALE_STATUSES, default: 'none', required: true },
     business: {
@@ -93,6 +128,9 @@ const userSchema = new Schema<IUser>(
 );
 
 userSchema.index({ accountType: 1, wholesaleStatus: 1 });
+// Reset lookups hit this directly; expiry is checked in the service, not by TTL,
+// because the row must survive expiry long enough to report "link expired".
+userSchema.index({ passwordResetTokenHash: 1 }, { sparse: true });
 userSchema.index({ createdAt: -1 });
 
 export const User = model<IUser>('User', userSchema);

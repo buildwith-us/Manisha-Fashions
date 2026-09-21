@@ -1,17 +1,17 @@
 import { logger } from './logger';
 
 /**
- * Key-value store for OTP codes and rate-limit counters (PRD 2 / 8.11).
+ * Key-value store for password-reset attempt counters and rate limits
+ * (PRD 2 / 8.11). Login OTPs were removed with phone sign-in.
  *
  * Redis was removed from this project, so the store is in-process. Two
  * consequences worth knowing, because they are behavioural, not cosmetic:
  *
- *   1. State does not survive a restart. An OTP issued before a deploy or an
- *      idle spin-down will not verify afterwards — the user simply requests a
- *      new code.
+ *   1. State does not survive a restart. A reset code's attempt count and
+ *      lockout are cleared by a deploy or an idle spin-down.
  *   2. State is not shared between instances. This is correct for a single
- *      instance only; running two would give each its own OTP and rate-limit
- *      state, letting a client bypass limits by landing on the other one.
+ *      instance only; running two would give each its own rate-limit state,
+ *      letting a client bypass limits by landing on the other one.
  *
  * If the service is ever scaled past one instance, this must go back to a
  * shared store. The `KeyValueStore` interface is the seam for that: implement
@@ -78,7 +78,7 @@ let store: KeyValueStore | null = null;
 
 export function initStore(): KeyValueStore {
   if (store) return store;
-  logger.info('Key-value store: in-process (OTP and rate-limit state reset on restart).');
+  logger.info('Key-value store: in-process (rate-limit state resets on restart).');
   store = new MemoryStore();
   return store;
 }

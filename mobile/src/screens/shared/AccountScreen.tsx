@@ -39,6 +39,7 @@ export function AccountScreen() {
   const isStaff = useIsStaff();
   const canManageUsers = usePermission(PERMISSIONS.USER_MANAGE);
   const canManageCategories = usePermission(PERMISSIONS.CATEGORY_MANAGE);
+  const canManageCod = usePermission(PERMISSIONS.COD_CONFIG_MANAGE);
 
   const [applying, setApplying] = useState(false);
 
@@ -96,7 +97,8 @@ export function AccountScreen() {
       >
         <View style={[styles.avatar, shadowAccent]}>
           <Text style={styles.avatarText}>
-            {(user.name ?? user.phone).slice(0, 2).toUpperCase()}
+            {/* Google-only accounts have no phone; fall back to the email. */}
+            {(user.name ?? user.phone ?? user.email ?? '?').slice(0, 2).toUpperCase()}
           </Text>
         </View>
         <View style={{ flex: 1 }}>
@@ -163,6 +165,15 @@ export function AccountScreen() {
                   label="Customer & staff accounts"
                   chevron
                   onPress={() => navigation.navigate('AdminUsers')}
+                />
+              ) : null}
+              {canManageCod ? (
+                <Row
+                  icon="sliders"
+                  label="COD settings"
+                  detail="Availability and charge, per state"
+                  chevron
+                  onPress={() => navigation.navigate('AdminCodSettings')}
                 />
               ) : null}
             </Group>

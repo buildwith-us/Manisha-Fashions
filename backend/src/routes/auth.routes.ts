@@ -8,11 +8,15 @@ import {
   addressSchema,
   addressUpdateSchema,
   applyWholesaleSchema,
+  forgotPasswordSchema,
+  googleLoginSchema,
   logoutSchema,
+  passwordLoginSchema,
   refreshSchema,
-  sendOtpSchema,
+  registerSchema,
+  resetPasswordSchema,
+  verifyResetOtpSchema,
   updateProfileSchema,
-  verifyOtpSchema,
 } from '../validators/auth.validator';
 
 const router = Router();
@@ -23,10 +27,37 @@ const router = Router();
  */
 
 // ── Public (PRD 8.7) ──
-router.post('/otp/send', validate({ body: sendOtpSchema }), authLimiter, authController.sendOtp);
-router.post('/otp/verify', validate({ body: verifyOtpSchema }), authLimiter, authController.verifyOtp);
 router.post('/refresh', validate({ body: refreshSchema }), authLimiter, authController.refresh);
 router.post('/logout', validate({ body: logoutSchema }), authController.logout);
+
+// ── Email + password (PRD 4.1 extension) ──
+router.post('/register', validate({ body: registerSchema }), authLimiter, authController.register);
+router.post('/login', validate({ body: passwordLoginSchema }), authLimiter, authController.login);
+
+// ── Google Sign-In ──
+router.post('/google', validate({ body: googleLoginSchema }), authLimiter, authController.googleLogin);
+
+// ── Password reset ──
+// The 3/hour quota per email and per IP lives in the service, keyed by both,
+// so rotating IPs cannot lift the per-address ceiling.
+router.post(
+  '/forgot-password',
+  validate({ body: forgotPasswordSchema }),
+  authLimiter,
+  authController.forgotPassword,
+);
+router.post(
+  '/verify-reset-otp',
+  validate({ body: verifyResetOtpSchema }),
+  authLimiter,
+  authController.verifyResetOtp,
+);
+router.post(
+  '/reset-password',
+  validate({ body: resetPasswordSchema }),
+  authLimiter,
+  authController.resetPassword,
+);
 
 // ── Authenticated ──
 router.get('/me', authenticate, authController.me);

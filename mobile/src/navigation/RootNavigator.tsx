@@ -2,7 +2,9 @@ import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { LoadingView } from '../components/ui';
 import { LoginScreen } from '../screens/auth/LoginScreen';
-import { OtpScreen } from '../screens/auth/OtpScreen';
+import { ForgotPasswordScreen } from '../screens/auth/ForgotPasswordScreen';
+import { ResetOtpScreen } from '../screens/auth/ResetOtpScreen';
+import { ResetPasswordScreen } from '../screens/auth/ResetPasswordScreen';
 import { WholesalePendingScreen } from '../screens/auth/WholesalePendingScreen';
 import { ProductDetailScreen } from '../screens/customer/ProductDetailScreen';
 import { FiltersScreen } from '../screens/customer/FiltersScreen';
@@ -15,6 +17,7 @@ import { AddressFormScreen } from '../screens/customer/AddressFormScreen';
 import { ProfileScreen } from '../screens/shared/ProfileScreen';
 import { AdminProductFormScreen } from '../screens/admin/AdminProductFormScreen';
 import { AdminCategoriesScreen } from '../screens/admin/AdminCategoriesScreen';
+import { AdminCodSettingsScreen } from '../screens/admin/AdminCodSettingsScreen';
 import { AdminOrderDetailScreen } from '../screens/admin/AdminOrderDetailScreen';
 import { AdminUsersScreen } from '../screens/admin/AdminUsersScreen';
 import { useAppSelector } from '../store/hooks';
@@ -26,6 +29,7 @@ import { navigationRef } from './navigationRef';
 import type { RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
 
 const navTheme = {
   ...DefaultTheme,
@@ -92,6 +96,7 @@ export function RootNavigator() {
             <Stack.Screen name="AdminCategories" component={AdminCategoriesScreen} />
             <Stack.Screen name="AdminOrderDetail" component={AdminOrderDetailScreen} />
             <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
+            <Stack.Screen name="AdminCodSettings" component={AdminCodSettingsScreen} />
             <Stack.Screen name="ProductDetail" component={ProductDetailScreen} />
             <Stack.Screen name="Profile" component={ProfileScreen} />
           </Stack.Group>
@@ -106,7 +111,21 @@ export function RootNavigator() {
               component={LoginScreen}
               options={{ presentation: 'modal' }}
             />
-            <Stack.Screen name="Otp" component={OtpScreen} options={{ presentation: 'modal' }} />
+            <Stack.Screen
+              name="ForgotPassword"
+              component={ForgotPasswordScreen}
+              options={{ presentation: 'modal' }}
+            />
+            <Stack.Screen
+              name="ResetOtp"
+              component={ResetOtpScreen}
+              options={{ presentation: 'modal' }}
+            />
+            <Stack.Screen
+              name="ResetPassword"
+              component={ResetPasswordScreen}
+              options={{ presentation: 'modal' }}
+            />
 
             <Stack.Screen name="ProductDetail" component={ProductDetailScreen} />
             <Stack.Screen

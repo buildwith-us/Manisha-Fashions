@@ -14,7 +14,6 @@ async function main(): Promise<void> {
   // Must be set before anything imports config/env.ts.
   process.env.NODE_ENV = 'development';
   process.env.MONGODB_URI = mongod.getUri('manisha_dev');
-  process.env.OTP_PROVIDER = process.env.OTP_PROVIDER ?? 'console';
   process.env.JWT_ACCESS_SECRET =
     process.env.JWT_ACCESS_SECRET ?? 'dev-only-access-secret-0123456789abcdef';
   process.env.JWT_REFRESH_SECRET =
@@ -74,18 +73,21 @@ async function main(): Promise<void> {
     })),
   );
 
+  const { hashPassword } = await import('../services/password.service');
   const admin = await User.create({
-    phone: env.SEED_ADMIN_PHONE,
+    email: env.SEED_ADMIN_EMAIL,
     name: 'Store Admin',
     accountType: 'admin',
+    passwordHash: await hashPassword(env.SEED_ADMIN_PASSWORD),
+    authProviders: ['password'],
   });
 
   const app = createApp();
   app.listen(env.PORT, () => {
     logger.info('─'.repeat(58));
     logger.info(`In-memory API ready → http://localhost:${env.PORT}${env.API_PREFIX}`);
-    logger.info(`Admin sign-in phone: ${admin.phone}`);
-    logger.info('OTP codes are printed here and returned as "devCode".');
+    logger.info(`Admin sign-in: ${admin.email} / ${env.SEED_ADMIN_PASSWORD}`);
+    logger.info('Password-reset codes are printed here when SMTP is unset.');
     logger.info('Data is discarded on exit.');
     logger.info('─'.repeat(58));
   });

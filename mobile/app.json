@@ -5,7 +5,10 @@
     "version": "3.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "scheme": "manishafashions",
+    "scheme": [
+      "manishafashions",
+      "in.manishafashions.app"
+    ],
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
@@ -39,11 +42,12 @@
           "photosPermission": "Allows admin and staff to upload product photos to the catalogue."
         }
       ],
-      "./plugins/withDevCleartext"
+      "./plugins/withDevCleartext",
+      "expo-web-browser"
     ],
     "extra": {
       "//": "Point apiUrl at your deployed API before building. Leave unset in local dev to use the per-platform localhost default (10.0.2.2 on the Android emulator).",
-      "apiUrl": "https://manisha-fashion-backend.onrender.com/api/v1"
+      "apiUrl": "http://10.0.2.2:4000/api/v1"
     }
   }
 }

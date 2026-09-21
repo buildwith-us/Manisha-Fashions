@@ -49,7 +49,6 @@ async function main(): Promise<void> {
   process.env.API_PREFIX = '/api/v1';
   process.env.JWT_ACCESS_SECRET = 'coverage-access-secret-value-0123456789';
   process.env.JWT_REFRESH_SECRET = 'coverage-refresh-secret-value-0123456789';
-  process.env.OTP_PROVIDER = 'console';
   process.env.RATE_LIMIT_GENERAL_PER_MIN = '100000';
   process.env.RATE_LIMIT_WRITE_PER_MIN = '100000';
   process.env.RATE_LIMIT_AUTH_PER_MIN = '100000';
@@ -118,31 +117,56 @@ async function main(): Promise<void> {
     return { status: response.status, body };
   }
 
-  async function login(phone: string, accountType: 'retail' | 'wholesale' = 'retail') {
-    const sent = await call('POST', '/auth/otp/send', { body: { phone } });
-    const verified = await call('POST', '/auth/otp/verify', {
-      body: { phone, code: sent.body.data?.devCode, accountType },
+  /**
+   * Registers a throwaway email/password account and returns its session plus
+   * the credentials, so a caller that changes the role can sign in again and
+   * pick the change up. Phone+OTP login was removed; these scripts no longer
+   * have a number to key on.
+   */
+  async function login(
+    label: string,
+    accountType: 'retail' | 'wholesale' = 'retail',
+  ): Promise<{ accessToken: string; refreshToken: string; user: any; email: string; password: string }> {
+    const email = `${label.replace(/[^a-z0-9]/gi, '').toLowerCase()}.${Date.now()}@example.test`;
+    const password = 'SmokeTest123';
+    const registered = await call('POST', '/auth/register', {
+      body: { email, password, accountType },
     });
-    return verified.body.data;
+    if (!registered.body.data?.accessToken) {
+      throw new Error(`Registration failed for ${email}: ${JSON.stringify(registered.body)}`);
+    }
+    return { ...registered.body.data, email, password };
+  }
+
+  /** Signs an existing account back in — used after a role change. */
+  async function reLogin(
+    email: string,
+    password: string,
+  ): Promise<{ accessToken: string; refreshToken: string; user: any }> {
+    const res = await call('POST', '/auth/login', { body: { email, password } });
+    if (!res.body.data?.accessToken) {
+      throw new Error(`Login failed for ${email}: ${JSON.stringify(res.body)}`);
+    }
+    return res.body.data;
   }
 
   try {
     /* ── Actors — each concern gets its own user so no call poisons another ─ */
-    await login('+919999000001');
-    await User.updateOne({ phone: '+919999000001' }, { $set: { accountType: 'admin' } });
-    const admin = await login('+919999000001');
+    const adminSeed = await login('admin');
+    await User.updateOne({ email: adminSeed.email }, { $set: { accountType: 'admin' } });
+    const admin = await reLogin(adminSeed.email, adminSeed.password);
     const adminToken = admin.accessToken;
 
     // Shopper: cart, wishlist, orders, addresses, profile. Never role-changed,
     // never applies for wholesale — either would strip its permissions.
-    const shopper = await login('+919812000001');
+    const shopper = await login('user9812000001');
     const shopperToken = shopper.accessToken;
 
     // Separate throwaway users for the destructive/role-changing routes.
-    const applicant = await login('+919812000022');
-    const roleTarget = await login('+919812000033');
-    const canceller = await login('+919812000044');
-    const ws = await login('+919812000055', 'wholesale');
+    const applicant = await login('user9812000022');
+    const roleTarget = await login('user9812000033');
+    const canceller = await login('user9812000044');
+    const ws = await login('user9812000055', 'wholesale');
 
     /* ── Health & config ───────────────────────────────────────────────── */
     await call('GET', '/health');

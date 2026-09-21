@@ -20,8 +20,12 @@ export type AdminTabParamList = {
 export type RootStackParamList = {
   // Auth
   Login: undefined;
-  Otp: undefined;
   WholesalePending: undefined;
+  ForgotPassword: undefined;
+  /** Entry for the 6-digit code emailed by /auth/forgot-password. */
+  ResetOtp: { email: string };
+  /** Token comes from /auth/verify-reset-otp, not from an email link. */
+  ResetPassword: { token: string };
 
   // Shells
   CustomerTabs: NavigatorScreenParams<CustomerTabParamList>;
@@ -47,6 +51,7 @@ export type RootStackParamList = {
   AdminCategories: undefined;
   AdminOrderDetail: { orderId: string };
   AdminUsers: undefined;
+  AdminCodSettings: undefined;
 };
 
 declare global {

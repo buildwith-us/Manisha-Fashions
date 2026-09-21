@@ -3,7 +3,10 @@ import { resolvePermissions } from '../utils/rbac';
 
 export interface SerializedUser {
   id: string;
-  phone: string;
+  /** Absent on Google-only accounts, which never supply one. */
+  phone?: string;
+  /** Which credentials this account can sign in with. */
+  authProviders: IUser['authProviders'];
   name?: string;
   email?: string;
   accountType: IUser['accountType'];
@@ -59,6 +62,7 @@ export function serializeUser(user: IUser): SerializedUser {
   return {
     id: user._id.toString(),
     phone: user.phone,
+    authProviders: user.authProviders ?? [],
     name: user.name,
     email: user.email,
     accountType: user.accountType,

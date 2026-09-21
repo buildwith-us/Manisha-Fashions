@@ -1,4 +1,4 @@
-import { del, get, getPaged, patch, post } from './client';
+import { del, get, getPaged, patch, post, put } from './client';
 import type {
   Address,
   AuthResult,
@@ -31,8 +31,22 @@ export interface UploadedImage {
 
 export interface StoreConfig {
   currency: string;
-  /** Flat COD shipping charge in paise (PRD 4.4). */
+  /**
+   * The *default* COD shipping charge in paise (PRD 4.4).
+   *
+   * COD is priced per delivery state, so this only applies to a state the
+   * store has not configured. Once an address is chosen the real figure comes
+   * from `orderApi.codOptions`.
+   */
   codShippingCharge: number;
+  /** The default COD availability for an unconfigured state. */
+  codDefaultEnabled?: boolean;
+  /**
+   * True when the API prices COD per state. Optional because a server that
+   * predates the feature omits it — the checkout screen then falls back to the
+   * single default charge above rather than asking for per-address options.
+   */
+  codPerStateSupported?: boolean;
   prepaidShippingCharge: number;
   razorpayEnabled: boolean;
   razorpayKeyId: string | null;
@@ -51,16 +65,34 @@ export const configApi = {
 /* ── Auth (PRD 4.1 / 8.7) ───────────────────────────────────────────────── */
 
 export const authApi = {
-  sendOtp: (phone: string) =>
-    post<{ message: string; expiresInSeconds: number; devCode?: string }>('/auth/otp/send', { phone }),
-
-  verifyOtp: (input: {
-    phone: string;
-    code: string;
+  register: (input: {
+    email: string;
+    password: string;
+    name?: string;
     accountType?: 'retail' | 'wholesale';
-    application?: { businessName?: string; gstNumber?: string; shopProofUrl?: string };
     deviceId?: string;
-  }) => post<AuthResult>('/auth/otp/verify', input),
+  }) => post<AuthResult>('/auth/register', input),
+
+  login: (input: { email: string; password: string; deviceId?: string }) =>
+    post<AuthResult>('/auth/login', input),
+
+  /** The Google ID token is verified server-side; the client never decodes it. */
+  google: (input: { idToken: string; deviceId?: string }) =>
+    post<AuthResult>('/auth/google', input),
+
+  /**
+   * Always resolves with the same generic message, registered or not — the
+   * server will not confirm whether an address has an account.
+   */
+  forgotPassword: (email: string) =>
+    post<{ message: string }>('/auth/forgot-password', { email }),
+
+  /** Step 2 of reset — exchanges the emailed code for a short-lived token. */
+  verifyResetOtp: (input: { email: string; otp: string }) =>
+    post<{ resetToken: string; expiresInSeconds: number }>('/auth/verify-reset-otp', input),
+
+  resetPassword: (input: { token: string; password: string }) =>
+    post<{ message: string }>('/auth/reset-password', input),
 
   refresh: (refreshToken: string) => post<AuthResult>('/auth/refresh', { refreshToken }),
 
@@ -194,7 +226,29 @@ export const wishlistApi = {
 
 /* ── Orders (PRD 4.4 / 4.5) ─────────────────────────────────────────────── */
 
+/** What COD costs for one saved address, and whether it is offered there. */
+export interface CodOptions {
+  addressId: string;
+  /** The state on the address, exactly as the customer typed it. */
+  state: string;
+  codEnabled: boolean;
+  /** Integer paise. Only meaningful when codEnabled is true. */
+  codCharge: number;
+  prepaidShippingCharge: number;
+  /** True when no rule matched this state and the store default applied. */
+  usingDefault: boolean;
+}
+
 export const orderApi = {
+  /**
+   * Asked once per address at checkout time, so the COD line shows this
+   * state's charge rather than a figure baked into the app. The server
+   * re-derives the same numbers when the order is placed, so a stale or
+   * tampered answer here cannot change what is billed.
+   */
+  codOptions: (addressId: string) =>
+    get<CodOptions>('/orders/cod-options', { params: { addressId } }),
+
   checkout: (input: {
     addressId: string;
     paymentMethod: 'razorpay' | 'cod';
@@ -243,6 +297,46 @@ export const adminApi = {
 
   setActive: (userId: string, isActive: boolean) =>
     patch<User>(`/admin/users/${userId}/active`, { isActive }),
+
+  /* ── COD settings, per state (PRD 4.4 / 6) ───────────────────────────── */
+
+  listCodConfig: () => get<CodConfigListing>('/admin/cod-config'),
+
+  /**
+   * Creates or replaces one state's rule. The state travels in the path, so it
+   * is encoded here — several of them contain spaces.
+   */
+  saveCodConfig: (state: string, input: { codEnabled: boolean; codCharge: number }) =>
+    put<CodStateConfig>(`/admin/cod-config/${encodeURIComponent(state)}`, input),
+
+  /** Drops the override so the state falls back to the store default. */
+  deleteCodConfig: (state: string) =>
+    del<{ state: string; codEnabled: boolean; codCharge: number }>(
+      `/admin/cod-config/${encodeURIComponent(state)}`,
+    ),
 };
+
+/** One state's COD rule as the admin screen shows it. */
+export interface CodStateConfig {
+  state: string;
+  codEnabled: boolean;
+  /** Integer paise. */
+  codCharge: number;
+  /** False for a state listed from the catalogue with no rule of its own. */
+  configured: boolean;
+  updatedAt?: string;
+}
+
+export interface CodConfigListing {
+  /** What an unconfigured state falls back to (from the server's env). */
+  defaults: { codEnabled: boolean; codCharge: number };
+  /** Only the states the store has actually set. */
+  configured: CodStateConfig[];
+  /**
+   * Every state to render: the catalogue merged with its rule (or the
+   * default), plus any configured state outside the catalogue.
+   */
+  states: CodStateConfig[];
+}
 
 export type { Pagination };

@@ -1,10 +1,6 @@
 import { z } from 'zod';
 import { objectId, phoneNumber } from './common';
 
-export const sendOtpSchema = z.object({
-  phone: phoneNumber,
-});
-
 const wholesaleApplication = z.object({
   businessName: z.string().trim().min(2).max(120).optional(),
   // PRD 6 — whether document upload is mandatory is still an open item, so the
@@ -18,18 +14,6 @@ const wholesaleApplication = z.object({
   shopProofUrl: z.string().url().optional(),
 });
 
-export const verifyOtpSchema = z.object({
-  phone: phoneNumber,
-  code: z
-    .string()
-    .trim()
-    .regex(/^\d{4,8}$/, 'Enter the code from your SMS'),
-  // Only retail or wholesale — admin and staff roles are never client-assignable.
-  accountType: z.enum(['retail', 'wholesale']).default('retail'),
-  application: wholesaleApplication.optional(),
-  deviceId: z.string().max(120).optional(),
-});
-
 export const refreshSchema = z.object({
   refreshToken: z.string().min(20, 'A refresh token is required'),
   deviceId: z.string().max(120).optional(),
@@ -37,6 +21,60 @@ export const refreshSchema = z.object({
 
 export const logoutSchema = z.object({
   refreshToken: z.string().min(20),
+});
+
+// ── Password + Google credentials ──
+
+/**
+ * Minimum 8 with a letter and a digit. Deliberately not a maximum-complexity
+ * rule: length carries the entropy, and bcrypt is the real defence.
+ */
+const passwordField = z
+  .string()
+  .min(8, 'Use at least 8 characters')
+  .max(128, 'That password is too long')
+  .regex(/[A-Za-z]/, 'Include at least one letter')
+  .regex(/\d/, 'Include at least one number');
+
+const emailField = z.string().trim().toLowerCase().email('Enter a valid email address').max(160);
+
+export const registerSchema = z.object({
+  email: emailField,
+  password: passwordField,
+  name: z.string().trim().min(1).max(80).optional(),
+  accountType: z.enum(['retail', 'wholesale']).default('retail'),
+  deviceId: z.string().max(120).optional(),
+});
+
+export const passwordLoginSchema = z.object({
+  email: emailField,
+  // Not `passwordField`: an old password that predates a policy change must
+  // still be able to sign in, and echoing the rules here would leak them.
+  password: z.string().min(1, 'Enter your password').max(128),
+  deviceId: z.string().max(120).optional(),
+});
+
+export const googleLoginSchema = z.object({
+  idToken: z.string().min(20, 'A Google ID token is required'),
+  deviceId: z.string().max(120).optional(),
+});
+
+export const forgotPasswordSchema = z.object({
+  email: emailField,
+});
+
+export const verifyResetOtpSchema = z.object({
+  email: emailField,
+  otp: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, 'Enter the 6-digit code from your email'),
+});
+
+export const resetPasswordSchema = z.object({
+  // Issued by /auth/verify-reset-otp, not carried in from an email link.
+  token: z.string().min(20, 'This reset request is not valid'),
+  password: passwordField,
 });
 
 export const updateProfileSchema = z.object({
