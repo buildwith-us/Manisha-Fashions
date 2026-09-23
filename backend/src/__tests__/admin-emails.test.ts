@@ -3,7 +3,12 @@ import { api, clearTestDb, connectTestDb, disconnectTestDb, request } from './he
 const mockVerifyIdToken = jest.fn();
 jest.mock('google-auth-library', () => ({
   OAuth2Client: class {
-    verifyIdToken = mockVerifyIdToken;
+    // A method, not a class field: jest hoists this factory above the `const`
+    // below, and a field initialiser would read it while still in the TDZ.
+    // A method body only evaluates when called, by which time it is defined.
+    verifyIdToken(...args: unknown[]) {
+      return mockVerifyIdToken(...args);
+    }
   },
 }));
 

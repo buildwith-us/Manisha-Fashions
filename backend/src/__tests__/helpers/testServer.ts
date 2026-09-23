@@ -39,6 +39,15 @@ export async function disconnectTestDb(): Promise<void> {
 export async function clearTestDb(): Promise<void> {
   const collections = await mongoose.connection.db!.collections();
   await Promise.all(collections.map((collection) => collection.deleteMany({})));
+
+  // Rate-limit counters and password-reset lockouts live in an in-process
+  // key-value store, not in Mongo, so wiping collections alone leaves them
+  // behind. They are keyed by email and IP, and every test request comes from
+  // the same IP — without this, one spec's requests spend the next spec's
+  // quota and it sees a 429 it never asked for.
+  const { disconnectStore, initStore } = await import('../../config/store');
+  await disconnectStore();
+  initStore();
 }
 
 export interface TestAddressInput {
