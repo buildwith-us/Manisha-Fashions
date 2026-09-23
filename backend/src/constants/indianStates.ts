@@ -4,10 +4,9 @@
  *
  * This is a *catalogue*, not a constraint: a delivery address's `state` is a
  * free-text field (see user.model.ts / auth.validator.ts), so a customer can
- * save anything that is two characters long. Nothing here validates an address.
- * It exists so the admin COD screen can list every state without the store
- * having to type them, and so a configuration row for "Tamil Nadu" is spelled
- * the same way every time it is created.
+ * save anything that is two characters long. Nothing here rejects an address;
+ * `canonicalStateName` below maps the ways a state gets typed onto one of
+ * these, so COD pricing and saved addresses agree on the spelling.
  */
 export const INDIAN_STATES = [
   'Andhra Pradesh',
@@ -49,3 +48,86 @@ export const INDIAN_STATES = [
 ] as const;
 
 export type IndianState = (typeof INDIAN_STATES)[number];
+
+/**
+ * Other ways customers write a state: ISO 3166-2:IN and vehicle-registration
+ * codes, and names that were official until recently. Spacing, case and
+ * punctuation variants ("Tamilnadu", "tamil-nadu", "Jammu & Kashmir") need no
+ * entry here — `compactStateKey` already folds those.
+ */
+const STATE_ALIASES: Record<string, IndianState> = {
+  AP: 'Andhra Pradesh',
+  AR: 'Arunachal Pradesh',
+  AS: 'Assam',
+  BR: 'Bihar',
+  CG: 'Chhattisgarh',
+  CT: 'Chhattisgarh',
+  Chattisgarh: 'Chhattisgarh',
+  GA: 'Goa',
+  GJ: 'Gujarat',
+  HR: 'Haryana',
+  HP: 'Himachal Pradesh',
+  JH: 'Jharkhand',
+  KA: 'Karnataka',
+  KL: 'Kerala',
+  MP: 'Madhya Pradesh',
+  MH: 'Maharashtra',
+  MN: 'Manipur',
+  ML: 'Meghalaya',
+  MZ: 'Mizoram',
+  NL: 'Nagaland',
+  OD: 'Odisha',
+  OR: 'Odisha',
+  Orissa: 'Odisha',
+  PB: 'Punjab',
+  RJ: 'Rajasthan',
+  SK: 'Sikkim',
+  TN: 'Tamil Nadu',
+  TS: 'Telangana',
+  TG: 'Telangana',
+  TR: 'Tripura',
+  UP: 'Uttar Pradesh',
+  UK: 'Uttarakhand',
+  UT: 'Uttarakhand',
+  Uttaranchal: 'Uttarakhand',
+  WB: 'West Bengal',
+  AN: 'Andaman and Nicobar Islands',
+  'Andaman and Nicobar': 'Andaman and Nicobar Islands',
+  CH: 'Chandigarh',
+  DH: 'Dadra and Nagar Haveli and Daman and Diu',
+  DN: 'Dadra and Nagar Haveli and Daman and Diu',
+  DD: 'Dadra and Nagar Haveli and Daman and Diu',
+  'Dadra and Nagar Haveli': 'Dadra and Nagar Haveli and Daman and Diu',
+  'Daman and Diu': 'Dadra and Nagar Haveli and Daman and Diu',
+  DL: 'Delhi',
+  'New Delhi': 'Delhi',
+  'NCT of Delhi': 'Delhi',
+  JK: 'Jammu and Kashmir',
+  LA: 'Ladakh',
+  LD: 'Lakshadweep',
+  PY: 'Puducherry',
+  Pondicherry: 'Puducherry',
+};
+
+/**
+ * A state name with everything but letters and digits removed, "&" read as
+ * "and". Spaces go too, so "Tamilnadu" and "Tamil Nadu" meet — the spelling
+ * split that sent orders to the default COD charge.
+ */
+export function compactStateKey(value: string): string {
+  return value.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]/g, '');
+}
+
+const CANONICAL_BY_KEY = new Map<string, IndianState>([
+  ...INDIAN_STATES.map((state) => [compactStateKey(state), state] as const),
+  ...Object.entries(STATE_ALIASES).map(([alias, state]) => [compactStateKey(alias), state] as const),
+]);
+
+/**
+ * The catalogue spelling of a state as a customer or admin typed it, or null
+ * when it is not recognisable as one — a typo, or a place outside India.
+ */
+export function canonicalStateName(value: string | null | undefined): IndianState | null {
+  if (!value) return null;
+  return CANONICAL_BY_KEY.get(compactStateKey(value)) ?? null;
+}

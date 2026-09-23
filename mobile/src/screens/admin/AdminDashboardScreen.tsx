@@ -193,7 +193,11 @@ export function AdminDashboardScreen() {
                   subtitle={`${product.sku ? `${product.sku} · ` : ''}${
                     product.category?.name ?? 'Uncategorised'
                   }`}
-                  detail={formatPaise(product.retailPrice)}
+                  detail={
+                    product.retailPrice !== undefined
+                      ? formatPaise(product.retailPrice)
+                      : `${formatPaise(product.price)} trade`
+                  }
                   trailingValue={String(product.stock)}
                   trailingLabel={product.stock === 0 ? 'out' : 'low'}
                   trailingTone="accent"

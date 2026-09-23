@@ -48,8 +48,10 @@ export async function getCart(viewer: AuthenticatedUser): Promise<SerializedCart
 
   for (const item of cart.items) {
     const product = productsById.get(item.productId.toString());
-    // A product deleted or deactivated since it was added is dropped silently.
-    if (!product || !product.isActive) {
+    // A product deleted or deactivated since it was added is dropped silently,
+    // as is one moved out of this viewer's storefront — a retail-only product
+    // has no wholesale price to show a trade buyer, and checkout refuses it.
+    if (!product || !product.isActive || !isProductVisibleTo(product.visibility, viewer)) {
       removedStale = true;
       continue;
     }

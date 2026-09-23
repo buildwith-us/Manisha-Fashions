@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { objectId, paginationQuery, paise } from './common';
+import { pricingIssues } from '../utils/productPricing';
 
 /** PRD 4.2 — filter by price range and category; sort by newest or price. */
 export const productListQuery = paginationQuery.extend({
@@ -24,9 +25,10 @@ export const createProductSchema = z
     description: z.string().trim().min(1).max(4000),
     category: objectId,
     images: z.array(z.string().url()).max(10).default([]),
-    // PRD 4.7 — both prices are required with no auto-derived default.
-    retailPrice: paise,
-    wholesalePrice: paise,
+    // PRD 4.7 — each price is required only for a tier the product is sold
+    // to (see the refinement below), and never derived from the other.
+    retailPrice: paise.optional(),
+    wholesalePrice: paise.optional(),
     stock: z.number().int().min(0).max(1_000_000),
     sku: z.string().trim().max(40).optional(),
     tags: z.array(z.string().trim().min(1).max(30)).max(20).default([]),
@@ -34,32 +36,30 @@ export const createProductSchema = z
     // Which storefront the product appears in (PRD 4.2 / 4.7).
     visibility: z.enum(['both', 'retail', 'wholesale']).default('both'),
   })
-  .refine((data) => data.wholesalePrice <= data.retailPrice, {
-    message: 'Wholesale price should not be higher than retail price',
-    path: ['wholesalePrice'],
+  .superRefine((data, ctx) => {
+    for (const issue of pricingIssues(data.visibility, data.retailPrice, data.wholesalePrice)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: issue.message, path: [issue.field] });
+    }
   });
 
-export const updateProductSchema = z
-  .object({
-    name: z.string().trim().min(2).max(160).optional(),
-    description: z.string().trim().min(1).max(4000).optional(),
-    category: objectId.optional(),
-    images: z.array(z.string().url()).max(10).optional(),
-    retailPrice: paise.optional(),
-    wholesalePrice: paise.optional(),
-    stock: z.number().int().min(0).max(1_000_000).optional(),
-    sku: z.string().trim().max(40).optional(),
-    tags: z.array(z.string().trim().min(1).max(30)).max(20).optional(),
-    isActive: z.boolean().optional(),
-    visibility: z.enum(['both', 'retail', 'wholesale']).optional(),
-  })
-  .refine(
-    (data) =>
-      data.retailPrice === undefined ||
-      data.wholesalePrice === undefined ||
-      data.wholesalePrice <= data.retailPrice,
-    { message: 'Wholesale price should not be higher than retail price', path: ['wholesalePrice'] },
-  );
+/**
+ * Prices are checked in product.service instead of here: whether a price is
+ * required depends on the visibility the product ends up with, which a partial
+ * update may not include.
+ */
+export const updateProductSchema = z.object({
+  name: z.string().trim().min(2).max(160).optional(),
+  description: z.string().trim().min(1).max(4000).optional(),
+  category: objectId.optional(),
+  images: z.array(z.string().url()).max(10).optional(),
+  retailPrice: paise.optional(),
+  wholesalePrice: paise.optional(),
+  stock: z.number().int().min(0).max(1_000_000).optional(),
+  sku: z.string().trim().max(40).optional(),
+  tags: z.array(z.string().trim().min(1).max(30)).max(20).optional(),
+  isActive: z.boolean().optional(),
+  visibility: z.enum(['both', 'retail', 'wholesale']).optional(),
+});
 
 export const createCategorySchema = z.object({
   name: z.string().trim().min(2).max(80),

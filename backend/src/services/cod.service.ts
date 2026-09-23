@@ -1,5 +1,5 @@
 import { env } from '../config/env';
-import { INDIAN_STATES } from '../constants/indianStates';
+import { INDIAN_STATES, canonicalStateName } from '../constants/indianStates';
 import { CodStateConfig, type ICodStateConfig } from '../models/codStateConfig.model';
 import { User } from '../models/user.model';
 import { ApiError } from '../utils/ApiError';
@@ -17,18 +17,11 @@ import type { PaymentMethod } from '../types';
  */
 
 /**
- * The form a state name is matched on.
+ * Case, punctuation and whitespace folded: "Tamil  Nadu" → "tamil nadu".
  *
- * Addresses store `state` as free text (user.model.ts: a trimmed string of 2–80
- * characters — there is no enum and no dropdown), so the same state arrives
- * spelled several ways. Folding case, punctuation and repeated whitespace
- * means "Tamil Nadu", "tamil nadu", "TAMIL  NADU" and "Tamil-Nadu" all resolve
- * to one configuration row.
- *
- * It does NOT fix typos or abbreviations: "Tamilnadu" and "TN" normalise to
- * something else entirely and fall back to the default. That is the intended
- * failure — a wrong default charge beats a crash or a silently free order —
- * but it is only fully solved by making the address state a fixed list.
+ * This is the *storage* format of `CodStateConfig.stateKey`. Match through
+ * `stateKeyFor`, not this: on its own it leaves "Tamilnadu" as "tamilnadu",
+ * which is exactly the mismatch that priced Tamil Nadu orders at the default.
  */
 export function normalizeStateKey(state: string): string {
   return state
@@ -36,6 +29,19 @@ export function normalizeStateKey(state: string): string {
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
     .replace(/\s+/g, ' ');
+}
+
+/**
+ * The key a state is saved and looked up under.
+ *
+ * Addresses store `state` as free text, so one state arrives as "Tamil Nadu",
+ * "Tamilnadu", "TN" or "tamil-nadu". Every recognisable form is first mapped to
+ * its catalogue name, so all of them — and the admin's row — share one key.
+ * Only a string that is not recognisably any state (a real typo) keeps its own
+ * key, and so finds no row and gets the default.
+ */
+export function stateKeyFor(state: string): string {
+  return normalizeStateKey(canonicalStateName(state) ?? state);
 }
 
 export interface CodResolution {
@@ -60,7 +66,7 @@ export function codDefaults(): { codEnabled: boolean; codCharge: number } {
  */
 export async function resolveCodForState(state: string | null | undefined): Promise<CodResolution> {
   const defaults = codDefaults();
-  const key = normalizeStateKey(state ?? '');
+  const key = stateKeyFor(state ?? '');
   if (!key) return { state: state ?? '', ...defaults, source: 'default' };
 
   const config = await CodStateConfig.findOne({ stateKey: key });
@@ -213,12 +219,12 @@ export async function upsertStateConfig(
   input: { codEnabled: boolean; codCharge: number },
 ): Promise<SerializedCodStateConfig> {
   const trimmed = state.trim();
-  const stateKey = normalizeStateKey(trimmed);
+  const stateKey = stateKeyFor(trimmed);
   if (!stateKey) throw ApiError.badRequest('Enter a state name');
 
   const config = await CodStateConfig.findOneAndUpdate(
     { stateKey },
-    { $set: { state: trimmed, codEnabled: input.codEnabled, codCharge: input.codCharge } },
+    { $set: { state: canonicalStateName(trimmed) ?? trimmed, codEnabled: input.codEnabled, codCharge: input.codCharge } },
     { new: true, upsert: true, setDefaultsOnInsert: true },
   );
 
@@ -227,7 +233,7 @@ export async function upsertStateConfig(
 
 /** Removes the override so the state falls back to the global default. */
 export async function deleteStateConfig(state: string): Promise<CodResolution> {
-  const stateKey = normalizeStateKey(state);
+  const stateKey = stateKeyFor(state);
   const deleted = await CodStateConfig.findOneAndDelete({ stateKey });
   if (!deleted) throw ApiError.notFound('No COD override is set for this state');
 

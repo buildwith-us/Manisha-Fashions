@@ -129,8 +129,10 @@ export const productApi = {
     description: string;
     category: string;
     images?: string[];
-    retailPrice: number;
-    wholesalePrice: number;
+    /** Required unless visibility is 'wholesale'. */
+    retailPrice?: number;
+    /** Required unless visibility is 'retail'. */
+    wholesalePrice?: number;
     stock: number;
     sku?: string;
     tags?: string[];

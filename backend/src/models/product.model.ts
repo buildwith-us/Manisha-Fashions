@@ -1,9 +1,11 @@
-import { Schema, model, type Document, type Types } from 'mongoose';
+import { Document, Schema, model, type Types } from 'mongoose';
 
 /**
  * PRD 8.2 — Product.
- * retailPrice / wholesalePrice are integer paise. Both are required with no
- * auto-derived default (PRD 4.7): admin sets each one explicitly.
+ * retailPrice / wholesalePrice are integer paise, each required only when the
+ * product is sold to that tier (see `visibility`): a retail-only product has
+ * no wholesale price at all. Never auto-derived (PRD 4.7) — admin sets each
+ * one explicitly.
  */
 export interface IProduct extends Document<Types.ObjectId> {
   _id: Types.ObjectId;
@@ -11,8 +13,10 @@ export interface IProduct extends Document<Types.ObjectId> {
   description: string;
   category: Types.ObjectId;
   images: string[];
-  retailPrice: number;
-  wholesalePrice: number;
+  /** Absent on a wholesale-only product. */
+  retailPrice?: number;
+  /** Absent on a retail-only product. */
+  wholesalePrice?: number;
   stock: number;
   sku?: string;
   tags: string[];
@@ -29,6 +33,18 @@ export interface IProduct extends Document<Types.ObjectId> {
   updatedAt: Date;
 }
 
+/**
+ * `required` for a price the product's visibility sells at. Only decided on
+ * documents (create / save): in an update query `this` is not the product, and
+ * product.service checks the merged result before any update is sent.
+ */
+function requiredUnlessOnly(onlyTier: 'retail' | 'wholesale') {
+  return function (this: unknown): boolean {
+    if (!(this instanceof Document)) return false;
+    return (this as IProduct).visibility !== onlyTier;
+  };
+}
+
 const productSchema = new Schema<IProduct>(
   {
     name: { type: String, required: true, trim: true, maxlength: 160, index: true },
@@ -43,8 +59,8 @@ const productSchema = new Schema<IProduct>(
         message: 'A product can have at most 10 images',
       },
     },
-    retailPrice: { type: Number, required: true, min: 0 },
-    wholesalePrice: { type: Number, required: true, min: 0 },
+    retailPrice: { type: Number, required: requiredUnlessOnly('wholesale'), min: 0 },
+    wholesalePrice: { type: Number, required: requiredUnlessOnly('retail'), min: 0 },
     stock: { type: Number, required: true, min: 0, default: 0 },
     sku: { type: String, trim: true, uppercase: true, sparse: true },
     tags: { type: [String], default: [], index: true },

@@ -94,8 +94,12 @@ export interface Product {
   /** Price for the signed-in account's tier, in paise. */
   price: number;
   priceTier: PriceTier;
-  retailPrice: number;
-  /** Only present for approved wholesale accounts, staff and admin. */
+  /** Absent on a wholesale-only product. */
+  retailPrice?: number;
+  /**
+   * Only present for approved wholesale accounts, staff and admin, and only on
+   * a product sold to wholesale buyers.
+   */
   wholesalePrice?: number;
   stock: number;
   inStock: boolean;

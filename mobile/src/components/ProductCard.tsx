@@ -87,7 +87,8 @@ function ProductCardComponent({
         <Text style={[styles.price, !product.inStock && styles.priceSoldOut]}>
           {formatPaise(product.price)}
         </Text>
-        {product.priceTier === 'wholesale' ? (
+        {/* A wholesale-only product has no retail price to compare against. */}
+        {product.priceTier === 'wholesale' && product.retailPrice !== undefined ? (
           <Text style={styles.strikePrice}>{formatPaise(product.retailPrice)}</Text>
         ) : null}
       </View>

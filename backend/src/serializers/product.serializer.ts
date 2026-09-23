@@ -1,6 +1,8 @@
 import type { IProduct } from '../models/product.model';
 import type { ICategory } from '../models/category.model';
 import type { AuthenticatedUser } from '../types';
+import { ApiError } from '../utils/ApiError';
+import { tierPriceOf } from '../utils/productPricing';
 import { canSeeWholesalePricing } from '../utils/rbac';
 
 /**
@@ -20,8 +22,12 @@ export interface SerializedProduct {
   /** The price this viewer actually pays, in paise. */
   price: number;
   priceTier: 'retail' | 'wholesale';
-  retailPrice: number;
-  /** Present only for approved wholesale accounts, staff and admin. */
+  /** Absent on a wholesale-only product. */
+  retailPrice?: number;
+  /**
+   * Present only for approved wholesale accounts, staff and admin — and only
+   * on a product sold to wholesale buyers. Never derived from retail.
+   */
   wholesalePrice?: number;
   stock: number;
   inStock: boolean;
@@ -66,16 +72,26 @@ export function serializeProduct(
   const buysAtWholesale =
     viewer?.accountType === 'wholesale' && viewer.wholesaleStatus === 'approved';
 
+  const retailPrice = tierPriceOf(product, 'retail');
+  const wholesalePrice = tierPriceOf(product, 'wholesale');
+  // A buyer only ever sees products sold at their tier (the storefront
+  // filter), so their tier's price exists. Staff and admin are not buyers:
+  // they see retail where there is one, else the wholesale-only price.
+  const tierPrice = buysAtWholesale ? wholesalePrice : retailPrice;
+  // `?? 0` is display-only for a product with no price at all, which
+  // validation prevents; charging goes through effectivePriceFor, which refuses.
+  const price = tierPrice ?? wholesalePrice ?? retailPrice ?? 0;
+
   return {
     id: product._id.toString(),
     name: product.name,
     description: product.description,
     category: serializeCategory((product as unknown as ProductLike).category),
     images: product.images,
-    price: buysAtWholesale ? product.wholesalePrice : product.retailPrice,
-    priceTier: buysAtWholesale ? 'wholesale' : 'retail',
-    retailPrice: product.retailPrice,
-    ...(wholesaleVisible ? { wholesalePrice: product.wholesalePrice } : {}),
+    price,
+    priceTier: buysAtWholesale || retailPrice === undefined ? 'wholesale' : 'retail',
+    ...(retailPrice !== undefined ? { retailPrice } : {}),
+    ...(wholesaleVisible && wholesalePrice !== undefined ? { wholesalePrice } : {}),
     stock: product.stock,
     inStock: product.stock > 0,
     ...(product.sku ? { sku: product.sku } : {}),
@@ -103,9 +119,13 @@ export function serializeProducts(
  * tier decision lives in exactly one place.
  */
 export function effectivePriceFor(product: IProduct, viewer: AuthenticatedUser): number {
-  return viewer.accountType === 'wholesale' && viewer.wholesaleStatus === 'approved'
-    ? product.wholesalePrice
-    : product.retailPrice;
+  const price = tierPriceOf(product, priceTierFor(viewer));
+  // Unreachable through the storefront checks, which every cart and order path
+  // applies first. Refusing beats charging a price the product does not have.
+  if (price === undefined) {
+    throw ApiError.conflict(`"${product.name}" is not sold at your price tier.`);
+  }
+  return price;
 }
 
 export function priceTierFor(viewer: AuthenticatedUser): 'retail' | 'wholesale' {

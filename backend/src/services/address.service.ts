@@ -1,3 +1,4 @@
+import { canonicalStateName } from '../constants/indianStates';
 import { User } from '../models/user.model';
 import { serializeAddress, type SerializedAddress } from '../serializers/user.serializer';
 import { ApiError } from '../utils/ApiError';
@@ -13,6 +14,17 @@ export interface AddressInput {
   state: string;
   pincode: string;
   isDefault?: boolean;
+}
+
+/**
+ * Saves a recognisable state under its catalogue spelling ("Tamilnadu" and
+ * "TN" become "Tamil Nadu"), so addresses read consistently and match COD
+ * rules without relying on lookup-time folding alone. Anything unrecognised
+ * is kept as typed — this corrects spelling, it does not reject addresses.
+ */
+function withCanonicalState<T extends { state?: string }>(input: T): T {
+  if (input.state === undefined) return input;
+  return { ...input, state: canonicalStateName(input.state) ?? input.state.trim() };
 }
 
 export async function listAddresses(userId: string): Promise<SerializedAddress[]> {
@@ -36,7 +48,7 @@ export async function addAddress(
     });
   }
 
-  user.addresses.push({ ...input, isDefault: shouldDefault } as never);
+  user.addresses.push({ ...withCanonicalState(input), isDefault: shouldDefault } as never);
   await user.save();
 
   return user.addresses.map(serializeAddress);
@@ -58,7 +70,7 @@ export async function updateAddress(
       entry.isDefault = false;
     });
   }
-  Object.assign(address, input);
+  Object.assign(address, withCanonicalState(input));
   await user.save();
 
   return user.addresses.map(serializeAddress);

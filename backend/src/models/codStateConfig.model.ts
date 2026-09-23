@@ -12,12 +12,10 @@ export interface ICodStateConfig extends Document<Types.ObjectId> {
   /** The state as the admin entered it — what gets shown back on the screen. */
   state: string;
   /**
-   * The lookup key: `state` normalised (see cod.service.normalizeStateKey).
-   *
-   * Delivery addresses store `state` as free text, so "Tamil Nadu", "tamil
-   * nadu" and "Tamil  Nadu" all reach checkout. Keying on the normalised form
-   * means one row covers all three rather than only the spelling the admin
-   * happened to use.
+   * The lookup key (see cod.service.stateKeyFor): the state's catalogue name,
+   * normalised. Delivery addresses store `state` as free text, so "Tamil Nadu",
+   * "Tamilnadu" and "TN" all reach checkout; keying on the catalogue name
+   * means one row covers every spelling rather than only the admin's.
    */
   stateKey: string;
   codEnabled: boolean;

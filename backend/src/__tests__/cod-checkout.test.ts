@@ -11,6 +11,7 @@ import {
 import { CodStateConfig } from '../models/codStateConfig.model';
 import { Order } from '../models/order.model';
 import { Product } from '../models/product.model';
+import { User } from '../models/user.model';
 
 /**
  * Checkout against the per-state COD rules (PRD 4.4 / 6 / 8.2).
@@ -140,9 +141,8 @@ describe('COD for an unconfigured state', () => {
 
   it('falls back for a state name no rule can match — a typo, not a crash', async () => {
     await setState('Tamil Nadu', true, 15_000);
-    // "Tamilnadu" normalises to a different key than "Tamil Nadu"; the address
-    // state is free text, so this is what a mistyped one actually does.
-    const { customer } = await customerReadyToCheckout('Tamilnadu');
+    // Not a spelling of any state, so no rule can claim it.
+    const { customer } = await customerReadyToCheckout('Tmil Naddu');
 
     const response = await request
       .post(api('/orders/checkout'))
@@ -151,6 +151,111 @@ describe('COD for an unconfigured state', () => {
       .expect(201);
 
     expect(response.body.data.order.shippingCharge).toBe(DEFAULT_COD_CHARGE);
+  });
+});
+
+/*
+  The production bug: Tamil Nadu was configured at ₹100, but most saved
+  addresses spell it "Tamilnadu", which used to normalise to a different key
+  and fell through to the ₹50 default.
+*/
+describe('COD matches the ways a state is actually typed', () => {
+  it.each(['Tamilnadu', 'TAMILNADU', 'tamil-nadu', ' Tamil  Nadu ', 'TN', 't.n.'])(
+    'charges the Tamil Nadu rule for an address saved as %j',
+    async (typed) => {
+      await setState('Tamil Nadu', true, 10_000);
+      const customer = await createTestUser({ address: { state: 'Kerala' } });
+      const product = await createTestProduct({ retailPrice: PRICE, stock: 10 });
+      await seedCart(customer.id, product.id, 1);
+      // Written straight to the document, bypassing the address API's
+      // canonicalisation — the shape of the addresses already in production.
+      await User.updateOne(
+        { _id: customer.id },
+        { $set: { 'addresses.0.state': typed } },
+      );
+
+      const options = await request
+        .get(api(`/orders/cod-options?addressId=${customer.addressId}`))
+        .set('Authorization', customer.auth)
+        .expect(200);
+      expect(options.body.data.codCharge).toBe(10_000);
+      expect(options.body.data.usingDefault).toBe(false);
+
+      const order = await request
+        .post(api('/orders/checkout'))
+        .set('Authorization', customer.auth)
+        .send({ addressId: customer.addressId, paymentMethod: 'cod' })
+        .expect(201);
+      expect(order.body.data.order.shippingCharge).toBe(10_000);
+    },
+  );
+
+  it('matches "&" for "and", and a former name', async () => {
+    await setState('Jammu and Kashmir', true, 7_000);
+    await setState('Odisha', true, 8_000);
+
+    const jk = await customerReadyToCheckout('Jammu & Kashmir');
+    const orissa = await customerReadyToCheckout('Orissa');
+
+    const [jkOrder, orissaOrder] = await Promise.all(
+      [jk, orissa].map(({ customer }) =>
+        request
+          .post(api('/orders/checkout'))
+          .set('Authorization', customer.auth)
+          .send({ addressId: customer.addressId, paymentMethod: 'cod' })
+          .expect(201),
+      ),
+    );
+    expect(jkOrder.body.data.order.shippingCharge).toBe(7_000);
+    expect(orissaOrder.body.data.order.shippingCharge).toBe(8_000);
+  });
+
+  it('keys an admin rule typed as a code onto the same row as the full name', async () => {
+    await setState('Tamil Nadu', true, 10_000);
+    await setState('TN', true, 12_000);
+
+    await expect(CodStateConfig.countDocuments()).resolves.toBe(1);
+    const row = await CodStateConfig.findOne();
+    expect(row?.state).toBe('Tamil Nadu');
+    expect(row?.codCharge).toBe(12_000);
+  });
+
+  it('saves a new address under the catalogue spelling', async () => {
+    const customer = await createTestUser();
+
+    const response = await request
+      .post(api('/auth/addresses'))
+      .set('Authorization', customer.auth)
+      .send({
+        fullName: 'Test Buyer',
+        phone: '+919876500000',
+        line1: '12 Test Street',
+        city: 'Chennai',
+        state: 'Tamilnadu',
+        pincode: '600001',
+      })
+      .expect(201);
+
+    expect(response.body.data[0].state).toBe('Tamil Nadu');
+  });
+
+  it('keeps an unrecognised state exactly as typed', async () => {
+    const customer = await createTestUser();
+
+    const response = await request
+      .post(api('/auth/addresses'))
+      .set('Authorization', customer.auth)
+      .send({
+        fullName: 'Test Buyer',
+        phone: '+919876500000',
+        line1: '12 Test Street',
+        city: 'Somewhere',
+        state: 'Tmil Naddu',
+        pincode: '600001',
+      })
+      .expect(201);
+
+    expect(response.body.data[0].state).toBe('Tmil Naddu');
   });
 });
 

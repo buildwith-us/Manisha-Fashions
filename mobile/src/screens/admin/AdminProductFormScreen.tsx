@@ -43,10 +43,12 @@ const MAX_IMAGES = 10;
 /**
  * PRD 4.7 — screens 25 and 33. Add / edit a product.
  *
- * Both prices are required and both are typed by hand: there is deliberately no
- * derived default, no "x% off retail" helper, and no fallback if the wholesale
- * field is left empty. An empty wholesale price fails validation rather than
- * quietly becoming a number.
+ * "Sell to" decides which prices exist: Everyone needs both, Retail only the
+ * retail price, Trade only the wholesale price. Only those fields are shown,
+ * required and sent. Every price is typed by hand: there is deliberately no
+ * derived default, no "x% off retail" helper, and no fallback if a required
+ * field is left empty — an empty price fails validation rather than quietly
+ * becoming a number.
  *
  * PRD 8.9 — a staff account can edit everything except the two price fields,
  * which are read-only here and refused by the server regardless.
@@ -97,7 +99,9 @@ export function AdminProductFormScreen() {
         setName(product.name);
         setDescription(product.description);
         setCategory(product.category?.id);
-        setRetailPrice(paiseToRupeeInput(product.retailPrice));
+        setRetailPrice(
+          product.retailPrice !== undefined ? paiseToRupeeInput(product.retailPrice) : '',
+        );
         setWholesalePrice(
           product.wholesalePrice !== undefined ? paiseToRupeeInput(product.wholesalePrice) : '',
         );
@@ -116,16 +120,19 @@ export function AdminProductFormScreen() {
 
   const retailPaise = rupeesToPaise(retailPrice);
   const wholesalePaise = rupeesToPaise(wholesalePrice);
+  const sellsRetail = visibility !== 'wholesale';
+  const sellsWholesale = visibility !== 'retail';
 
   const errors = {
     name: name.trim().length < 2 ? 'Enter a product name' : null,
     description: description.trim().length < 1 ? 'Enter a description' : null,
     category: !category ? 'Choose a category' : null,
-    retailPrice: !retailPrice.trim() || retailPaise <= 0 ? 'Enter the retail price' : null,
+    retailPrice:
+      sellsRetail && (!retailPrice.trim() || retailPaise <= 0) ? 'Enter the retail price' : null,
     wholesalePrice:
-      canManagePrice && (!wholesalePrice.trim() || wholesalePaise <= 0)
+      canManagePrice && sellsWholesale && (!wholesalePrice.trim() || wholesalePaise <= 0)
         ? 'Enter the wholesale price'
-        : canManagePrice && wholesalePaise > retailPaise
+        : canManagePrice && sellsRetail && sellsWholesale && wholesalePaise > retailPaise
           ? 'Wholesale price cannot exceed retail price'
           : null,
     stock: Number.isNaN(Number(stock)) || Number(stock) < 0 ? 'Enter a valid stock count' : null,
@@ -178,6 +185,12 @@ export function AdminProductFormScreen() {
       .map((tag) => tag.trim())
       .filter(Boolean);
 
+    // Only the prices this product is sold at. The server clears the other.
+    const prices = {
+      ...(sellsRetail ? { retailPrice: retailPaise } : {}),
+      ...(sellsWholesale ? { wholesalePrice: wholesalePaise } : {}),
+    };
+
     try {
       if (isEdit && productId) {
         await productApi.update(productId, {
@@ -192,7 +205,7 @@ export function AdminProductFormScreen() {
           visibility,
           // Price fields are only sent when this account may change them —
           // sending them as staff would be a guaranteed 403.
-          ...(canManagePrice ? { retailPrice: retailPaise, wholesalePrice: wholesalePaise } : {}),
+          ...(canManagePrice ? prices : {}),
         });
       } else {
         await productApi.create({
@@ -200,8 +213,7 @@ export function AdminProductFormScreen() {
           description: description.trim(),
           category: category as string,
           images,
-          retailPrice: retailPaise,
-          wholesalePrice: wholesalePaise,
+          ...prices,
           stock: Number(stock),
           sku: sku.trim() || undefined,
           tags: tagList,
@@ -275,6 +287,34 @@ export function AdminProductFormScreen() {
             busy={uploading}
           />
 
+          {/* First, because it decides which price fields exist below. */}
+          <View style={styles.block}>
+            {/* Deliberately separate from "Visible in shop": that takes a
+                product off sale entirely, this decides which customers see it
+                while it is on sale. */}
+            <SectionLabel>Sell to</SectionLabel>
+            <Group>
+              <View style={styles.storefrontRow}>
+                <Segmented
+                  value={visibility}
+                  onChange={setVisibility}
+                  options={[
+                    { value: 'both', label: 'Everyone' },
+                    { value: 'retail', label: 'Retail' },
+                    { value: 'wholesale', label: 'Trade' },
+                  ]}
+                />
+                <Text style={styles.storefrontHint}>
+                  {visibility === 'both'
+                    ? 'Shown to retail customers and approved trade buyers.'
+                    : visibility === 'retail'
+                      ? 'Retail customers only — hidden from approved trade buyers.'
+                      : 'Approved trade buyers only — hidden from retail customers.'}
+                </Text>
+              </View>
+            </Group>
+          </View>
+
           <View style={styles.block}>
             <Group>
               <FieldRow label="Name" focused={focused === 'name'}>
@@ -311,48 +351,53 @@ export function AdminProductFormScreen() {
                 </FieldRow>
               </SplitRow>
 
-              {/* Both prices are entered by hand — see the file header. */}
+              {/* Only the prices "Sell to" calls for, each typed by hand — see
+                  the file header. */}
               <SplitRow>
-                <FieldRow
-                  label="Retail price"
-                  focused={focused === 'retailPrice'}
-                  style={{ flex: 1 }}
-                >
-                  <View style={styles.priceCell}>
-                    <Text style={styles.rupee}>₹</Text>
-                    <TextInput
-                      value={retailPrice}
-                      onChangeText={setRetailPrice}
-                      onFocus={() => setFocused('retailPrice')}
-                      onBlur={() => setFocused(null)}
-                      keyboardType="decimal-pad"
-                      placeholder="0"
-                      placeholderTextColor={colors.textDisabled}
-                      editable={canManagePrice}
-                      style={styles.priceInput}
-                    />
-                  </View>
-                </FieldRow>
-                <FieldRow
-                  label="Wholesale price"
-                  focused={focused === 'wholesalePrice'}
-                  style={{ flex: 1 }}
-                >
-                  <View style={styles.priceCell}>
-                    <Text style={[styles.rupee, styles.tradeInk]}>₹</Text>
-                    <TextInput
-                      value={wholesalePrice}
-                      onChangeText={setWholesalePrice}
-                      onFocus={() => setFocused('wholesalePrice')}
-                      onBlur={() => setFocused(null)}
-                      keyboardType="decimal-pad"
-                      placeholder="0"
-                      placeholderTextColor={colors.textDisabled}
-                      editable={canManagePrice}
-                      style={[styles.priceInput, styles.tradeInk]}
-                    />
-                  </View>
-                </FieldRow>
+                {sellsRetail ? (
+                  <FieldRow
+                    label="Retail price"
+                    focused={focused === 'retailPrice'}
+                    style={{ flex: 1 }}
+                  >
+                    <View style={styles.priceCell}>
+                      <Text style={styles.rupee}>₹</Text>
+                      <TextInput
+                        value={retailPrice}
+                        onChangeText={setRetailPrice}
+                        onFocus={() => setFocused('retailPrice')}
+                        onBlur={() => setFocused(null)}
+                        keyboardType="decimal-pad"
+                        placeholder="0"
+                        placeholderTextColor={colors.textDisabled}
+                        editable={canManagePrice}
+                        style={styles.priceInput}
+                      />
+                    </View>
+                  </FieldRow>
+                ) : null}
+                {sellsWholesale ? (
+                  <FieldRow
+                    label="Wholesale price"
+                    focused={focused === 'wholesalePrice'}
+                    style={{ flex: 1 }}
+                  >
+                    <View style={styles.priceCell}>
+                      <Text style={[styles.rupee, styles.tradeInk]}>₹</Text>
+                      <TextInput
+                        value={wholesalePrice}
+                        onChangeText={setWholesalePrice}
+                        onFocus={() => setFocused('wholesalePrice')}
+                        onBlur={() => setFocused(null)}
+                        keyboardType="decimal-pad"
+                        placeholder="0"
+                        placeholderTextColor={colors.textDisabled}
+                        editable={canManagePrice}
+                        style={[styles.priceInput, styles.tradeInk]}
+                      />
+                    </View>
+                  </FieldRow>
+                ) : null}
               </SplitRow>
 
               <FieldRow label="Description" focused={focused === 'description'}>
@@ -375,30 +420,6 @@ export function AdminProductFormScreen() {
               />
             </Group>
 
-            {/* Deliberately separate from "Visible in shop": that takes a
-                product off sale entirely, this decides which customers see it
-                while it is on sale. */}
-            <SectionLabel>Sell to</SectionLabel>
-            <Group>
-              <View style={styles.storefrontRow}>
-                <Segmented
-                  value={visibility}
-                  onChange={setVisibility}
-                  options={[
-                    { value: 'both', label: 'Everyone' },
-                    { value: 'retail', label: 'Retail' },
-                    { value: 'wholesale', label: 'Trade' },
-                  ]}
-                />
-                <Text style={styles.storefrontHint}>
-                  {visibility === 'both'
-                    ? 'Shown to retail customers and approved trade buyers.'
-                    : visibility === 'retail'
-                      ? 'Retail customers only — hidden from approved trade buyers.'
-                      : 'Approved trade buyers only — hidden from retail customers.'}
-                </Text>
-              </View>
-            </Group>
 
             {!canManagePrice ? (
               <Text style={styles.permissionNote}>

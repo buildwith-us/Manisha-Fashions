@@ -264,9 +264,11 @@ export function ProductDetailScreen() {
   const wishlisted = wishlistIds.includes(product.id);
   const lowStock = product.inStock && product.stock <= 5;
   const isWholesale = product.priceTier === 'wholesale';
+  // A wholesale-only product has no retail price, so no saving to quote.
+  const retailPrice = product.retailPrice;
   const saving =
-    isWholesale && product.retailPrice > 0
-      ? Math.round(((product.retailPrice - product.price) / product.retailPrice) * 100)
+    isWholesale && retailPrice !== undefined && retailPrice > 0
+      ? Math.round(((retailPrice - product.price) / retailPrice) * 100)
       : 0;
 
   return (
@@ -381,10 +383,12 @@ export function ProductDetailScreen() {
               <Text style={styles.tradeLabel}>Your trade price</Text>
               <View style={styles.tradeRow}>
                 <Text style={styles.tradePrice}>{formatPaise(product.price)}</Text>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={styles.tradeRetail}>Retail {formatPaise(product.retailPrice)}</Text>
-                  {saving > 0 ? <Text style={styles.tradeSaving}>Save {saving}%</Text> : null}
-                </View>
+                {retailPrice !== undefined ? (
+                  <View style={{ alignItems: 'flex-end' }}>
+                    <Text style={styles.tradeRetail}>Retail {formatPaise(retailPrice)}</Text>
+                    {saving > 0 ? <Text style={styles.tradeSaving}>Save {saving}%</Text> : null}
+                  </View>
+                ) : null}
               </View>
               <Text style={styles.tradeNote}>No minimum order quantity.</Text>
             </View>
@@ -406,10 +410,15 @@ export function ProductDetailScreen() {
 
           {/* Staff and admin see the other tier for reference. A retail account
               never receives wholesalePrice from the API (PRD 8.4). */}
-          {isStaff && product.wholesalePrice !== undefined ? (
+          {isStaff ? (
             <Text style={styles.staffNote}>
-              Retail {formatPaise(product.retailPrice)} · Wholesale{' '}
-              {formatPaise(product.wholesalePrice)} · Stock {product.stock}
+              {[
+                retailPrice !== undefined ? `Retail ${formatPaise(retailPrice)}` : 'Trade only',
+                product.wholesalePrice !== undefined
+                  ? `Wholesale ${formatPaise(product.wholesalePrice)}`
+                  : 'Retail only',
+                `Stock ${product.stock}`,
+              ].join(' · ')}
             </Text>
           ) : null}
 

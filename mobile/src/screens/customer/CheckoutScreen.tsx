@@ -62,10 +62,14 @@ export function CheckoutScreen() {
   const [configLoaded, setConfigLoaded] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('razorpay');
 
-  /* COD for the selected address's state. `null` while it is being fetched or
-     when the server does not price COD per state, in which case the screen
-     falls back to the single default charge in `config`. */
+  /* COD for the selected address's state. `null` while it is being fetched,
+     after a failed fetch (see `codLookupFailed`), or when the server does not
+     price COD per state — only in that last case does the screen use the
+     single default charge in `config`. */
   const [codOptions, setCodOptions] = useState<CodOptions | null>(null);
+  const [codLookupFailed, setCodLookupFailed] = useState(false);
+  /** Bumped by "Try again" to re-run the lookup for the same address. */
+  const [codLookupAttempt, setCodLookupAttempt] = useState(0);
 
   /* The one product a Buy-now checkout is ordering. Its price comes from the
      API at the buyer's tier — this screen never computes money, it only adds
@@ -126,13 +130,16 @@ export function CheckoutScreen() {
 
      A server that does not price COD per state (`codPerStateSupported`
      absent) is left on the store-wide default rather than being asked a
-     question it cannot answer. A failed request does the same: the default
-     charge may be wrong for the state, but the server prices the order either
-     way, so the worst case is a summary that corrects itself on the order
-     confirmation rather than a checkout that cannot proceed.
+     question it cannot answer.
+
+     A failed or unfinished lookup does NOT fall back to the default: that
+     showed ₹50 for a state configured at ₹100, and the server then charged
+     ₹100. Until the address's own figure arrives, COD shows no price and
+     cannot be placed; a failure offers a retry.
   */
   useEffect(() => {
     if (!selectedAddressId || !configLoaded) return;
+    setCodLookupFailed(false);
     if (config?.codPerStateSupported !== true) {
       setCodOptions(null);
       return;
@@ -146,13 +153,13 @@ export function CheckoutScreen() {
         if (!cancelled) setCodOptions(result);
       })
       .catch(() => {
-        if (!cancelled) setCodOptions(null);
+        if (!cancelled) setCodLookupFailed(true);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [selectedAddressId, configLoaded, config?.codPerStateSupported]);
+  }, [selectedAddressId, configLoaded, config?.codPerStateSupported, codLookupAttempt]);
 
   /*
      Whether COD may be offered at all. Unknown counts as available: the option
@@ -161,8 +168,14 @@ export function CheckoutScreen() {
   */
   const codAvailable = codOptions ? codOptions.codEnabled : true;
 
-  /** The COD charge for this address, falling back to the store default. */
-  const codCharge = codOptions?.codCharge ?? config?.codShippingCharge ?? 0;
+  /**
+     The COD charge for this address, or `null` while it is not known. The
+     store default is used only by a server that has no per-state pricing.
+  */
+  const codCharge: number | null =
+    config?.codPerStateSupported === true
+      ? (codOptions?.codCharge ?? null)
+      : (config?.codShippingCharge ?? null);
 
   /*
      COD can go away under the customer — they pick an address in a state where
@@ -176,7 +189,8 @@ export function CheckoutScreen() {
     }
   }, [codAvailable, paymentMethod, config?.razorpayEnabled]);
 
-  const shippingCharge = useMemo(() => {
+  /** `null` while the COD figure for this address is still unknown. */
+  const shippingCharge = useMemo((): number | null => {
     if (!config) return 0;
     return paymentMethod === 'cod' ? codCharge : config.prepaidShippingCharge;
   }, [config, paymentMethod, codCharge]);
@@ -186,7 +200,7 @@ export function CheckoutScreen() {
       ? buyNowProduct.price * buyNow.quantity
       : 0
     : (cart?.subtotal ?? 0);
-  const total = subtotal + shippingCharge;
+  const total = shippingCharge === null ? null : subtotal + shippingCharge;
 
   const handlePlaceOrder = async () => {
     if (!selectedAddressId) return;
@@ -332,7 +346,15 @@ export function CheckoutScreen() {
                 onPress={() => setPaymentMethod('cod')}
                 title="Cash on delivery"
                 subtitle="Pay the courier on arrival"
-                note={config ? `+${formatPaise(codCharge)}` : undefined}
+                note={
+                  !config
+                    ? undefined
+                    : codCharge !== null
+                      ? `+${formatPaise(codCharge)}`
+                      : codLookupFailed
+                        ? undefined
+                        : '…'
+                }
               />
             ) : null}
           </Group>
@@ -341,6 +363,21 @@ export function CheckoutScreen() {
             <Text style={styles.paymentNote}>
               Cash on delivery isn't available for deliveries to {codOptions.state}.
             </Text>
+          ) : null}
+
+          {codLookupFailed ? (
+            <View style={styles.codRetryRow}>
+              <Text style={[styles.paymentNote, styles.codRetryText]}>
+                Couldn't load the cash on delivery charge for this address.
+              </Text>
+              <PressableScale
+                onPress={() => setCodLookupAttempt((attempt) => attempt + 1)}
+                hitSlop={8}
+                accessibilityRole="button"
+              >
+                <Text style={styles.codRetryLabel}>Try again</Text>
+              </PressableScale>
+            </View>
           ) : null}
         </View>
 
@@ -373,7 +410,15 @@ export function CheckoutScreen() {
             )}
             <SummaryLine
               label="Shipping"
-              value={shippingCharge === 0 ? 'Free' : formatPaise(shippingCharge)}
+              value={
+                shippingCharge === null
+                  ? codLookupFailed
+                    ? 'Unavailable'
+                    : 'Calculating…'
+                  : shippingCharge === 0
+                    ? 'Free'
+                    : formatPaise(shippingCharge)
+              }
               valueTone={shippingCharge === 0 ? 'success' : 'default'}
               divided
             />
@@ -384,7 +429,7 @@ export function CheckoutScreen() {
       <View style={styles.footer}>
         <View style={styles.totalRow}>
           <Text style={styles.totalLabel}>Total</Text>
-          <Text style={styles.totalValue}>{formatPaise(total)}</Text>
+          <Text style={styles.totalValue}>{total === null ? '—' : formatPaise(total)}</Text>
         </View>
         <Button
           label={paymentMethod === 'cod' ? 'Place order' : 'Pay now'}
@@ -394,7 +439,9 @@ export function CheckoutScreen() {
              leaves nothing to place the order with. The server would refuse it
              anyway; blocking here says so before the customer taps. */
           disabled={
-            !selectedAddressId || !hasSomethingToOrder || (paymentMethod === 'cod' && !codAvailable)
+            !selectedAddressId ||
+            !hasSomethingToOrder ||
+            (paymentMethod === 'cod' && (!codAvailable || codCharge === null))
           }
         />
       </View>
@@ -497,6 +544,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
   },
   optionNote: { ...typography.caption, color: colors.textFaint },
+  codRetryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
+  codRetryText: { flex: 1, marginTop: 0 },
+  codRetryLabel: { ...typography.footnoteStrong, color: colors.primary },
 
   summaryCard: { paddingHorizontal: spacing.xl, borderRadius: radius.lg, backgroundColor: colors.surface },
   summaryLine: {

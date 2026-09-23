@@ -41,12 +41,28 @@ export interface PaginatedProducts {
   hasMore: boolean;
 }
 
-const SORT_MAP: Record<ProductQuery['sort'], Record<string, SortOrder>> = {
-  newest: { createdAt: -1 },
-  price_asc: { retailPrice: 1 },
-  price_desc: { retailPrice: -1 },
-  name_asc: { name: 1 },
-};
+/**
+ * The price field a viewer is shown, so sorting and the price filter work on
+ * the figure on their screen. It also keeps wholesale-only products, which
+ * have no retail price, from sorting and filtering as if priced at nothing.
+ */
+function priceFieldFor(storefront: ProductQuery['storefront']): 'retailPrice' | 'wholesalePrice' {
+  return storefront === 'wholesale' ? 'wholesalePrice' : 'retailPrice';
+}
+
+function sortFor(query: ProductQuery): Record<string, SortOrder> {
+  const priceField = priceFieldFor(query.storefront);
+  switch (query.sort) {
+    case 'price_asc':
+      return { [priceField]: 1 };
+    case 'price_desc':
+      return { [priceField]: -1 };
+    case 'name_asc':
+      return { name: 1 };
+    default:
+      return { createdAt: -1 };
+  }
+}
 
 function buildFilter(query: ProductQuery): FilterQuery<IProduct> {
   const filter: FilterQuery<IProduct> = {};
@@ -62,12 +78,11 @@ function buildFilter(query: ProductQuery): FilterQuery<IProduct> {
   }
   if (query.inStockOnly) filter.stock = { $gt: 0 };
 
-  // Filter by price range always applies to retailPrice: it is the tier every
-  // account can see, so the filter means the same thing for every viewer.
   if (query.minPrice !== undefined || query.maxPrice !== undefined) {
-    filter.retailPrice = {};
-    if (query.minPrice !== undefined) filter.retailPrice.$gte = query.minPrice;
-    if (query.maxPrice !== undefined) filter.retailPrice.$lte = query.maxPrice;
+    const range: { $gte?: number; $lte?: number } = {};
+    if (query.minPrice !== undefined) range.$gte = query.minPrice;
+    if (query.maxPrice !== undefined) range.$lte = query.maxPrice;
+    filter[priceFieldFor(query.storefront)] = range;
   }
 
   if (query.search) {
@@ -86,7 +101,7 @@ export async function findPaginated(query: ProductQuery): Promise<PaginatedProdu
   const [items, total] = await Promise.all([
     Product.find(filter)
       .populate('category', 'name slug')
-      .sort(SORT_MAP[query.sort])
+      .sort(sortFor(query))
       .skip(skip)
       .limit(query.limit)
       .exec(),
@@ -120,8 +135,16 @@ export async function create(data: ProductWriteInput): Promise<IProduct> {
   return product.populate('category', 'name slug');
 }
 
-export async function updateById(id: string, data: ProductWriteInput): Promise<IProduct | null> {
-  return Product.findByIdAndUpdate(id, { $set: data }, { new: true, runValidators: true })
+export async function updateById(
+  id: string,
+  data: ProductWriteInput,
+  unset: Array<'retailPrice' | 'wholesalePrice'> = [],
+): Promise<IProduct | null> {
+  const update = {
+    $set: data,
+    ...(unset.length > 0 ? { $unset: Object.fromEntries(unset.map((field) => [field, 1])) } : {}),
+  };
+  return Product.findByIdAndUpdate(id, update, { new: true, runValidators: true })
     .populate('category', 'name slug')
     .exec();
 }
