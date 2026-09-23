@@ -5,7 +5,10 @@
     "version": "3.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "scheme": "manishafashions",
+    "scheme": [
+      "manishafashions",
+      "in.manishafashions.app"
+    ],
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
@@ -25,10 +28,7 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false,
-      "permissions": [
-        "android.permission.RECORD_AUDIO"
-      ]
+      "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"

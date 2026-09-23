@@ -20,6 +20,7 @@ export const PERMISSIONS = {
   WHOLESALE_APPROVE: 'wholesale:approve',
   USER_MANAGE: 'user:manage',
   DASHBOARD_VIEW: 'dashboard:view',
+  COD_CONFIG_MANAGE: 'cod:config:manage',
 } as const;
 
 export function usePermission(permission: string): boolean {

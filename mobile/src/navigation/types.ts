@@ -51,6 +51,7 @@ export type RootStackParamList = {
   AdminCategories: undefined;
   AdminOrderDetail: { orderId: string };
   AdminUsers: undefined;
+  AdminCodSettings: undefined;
 };
 
 declare global {

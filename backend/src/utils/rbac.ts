@@ -28,6 +28,12 @@ export const PERMISSIONS = {
   WHOLESALE_APPROVE: 'wholesale:approve',
   USER_MANAGE: 'user:manage',
   DASHBOARD_VIEW: 'dashboard:view',
+  /**
+   * Per-state Cash-on-Delivery rules. Admin only, alongside the other pricing
+   * permission: this decides what a customer is charged and whether they can
+   * order at all in a given state, which PRD 8.9 keeps out of staff's hands.
+   */
+  COD_CONFIG_MANAGE: 'cod:config:manage',
 } as const;
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -54,6 +60,7 @@ const STAFF_PERMISSIONS: Permission[] = [
 const ADMIN_PERMISSIONS: Permission[] = [
   ...STAFF_PERMISSIONS,
   PERMISSIONS.PRODUCT_PRICE_MANAGE,
+  PERMISSIONS.COD_CONFIG_MANAGE,
   PERMISSIONS.WHOLESALE_APPROVE,
   PERMISSIONS.USER_MANAGE,
   PERMISSIONS.ORDER_READ_OWN,

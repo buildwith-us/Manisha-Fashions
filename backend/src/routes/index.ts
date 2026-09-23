@@ -32,11 +32,20 @@ router.get('/health', (_req, res) => {
  * Storefront settings the client needs before it can render a correct checkout
  * summary — the COD shipping charge in particular (PRD 4.4 / 6). Values are
  * server-owned so changing the fee does not require an app release.
+ *
+ * COD is now priced per delivery state, so the figures here are only the
+ * fallback for a state the store has not configured. The charge that an order
+ * will actually carry comes from GET /orders/cod-options?addressId=… once an
+ * address is chosen, and checkout re-derives it server-side regardless.
  */
 router.get('/config', authenticate, (_req, res) => {
   res.success({
     currency: env.CURRENCY,
+    /** Default only — see /orders/cod-options for the address's real charge. */
     codShippingCharge: env.COD_SHIPPING_CHARGE,
+    codDefaultEnabled: env.COD_DEFAULT_ENABLED,
+    /** True when this server prices COD per state. */
+    codPerStateSupported: true,
     prepaidShippingCharge: env.PREPAID_SHIPPING_CHARGE,
     razorpayEnabled: razorpayConfigured,
     razorpayKeyId: razorpayConfigured ? env.RAZORPAY_KEY_ID : null,

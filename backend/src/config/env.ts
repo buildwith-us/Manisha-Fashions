@@ -44,7 +44,19 @@ const envSchema = z.object({
   RAZORPAY_KEY_SECRET: z.string().optional(),
   RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
 
+  /**
+   * The COD fallback, in paise, for a state with no CodStateConfig row.
+   *
+   * Per-state overrides live in the `codstateconfigs` collection and are
+   * managed from the admin COD Settings screen; this pair is what applies
+   * until a state is configured, so COD works on a fresh database.
+   */
   COD_SHIPPING_CHARGE: z.coerce.number().int().nonnegative().default(5000),
+  /** Set to false to make COD opt-in: off everywhere except states admin enables. */
+  COD_DEFAULT_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
   PREPAID_SHIPPING_CHARGE: z.coerce.number().int().nonnegative().default(0),
   CURRENCY: z.string().default('INR'),
 

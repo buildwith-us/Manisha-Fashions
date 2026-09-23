@@ -179,6 +179,11 @@ export async function post<T>(url: string, body?: unknown, config?: AxiosRequest
   return response.data.data;
 }
 
+export async function put<T>(url: string, body?: unknown): Promise<T> {
+  const response = await api.put<ApiEnvelope<T>>(url, body);
+  return response.data.data;
+}
+
 export async function patch<T>(url: string, body?: unknown): Promise<T> {
   const response = await api.patch<ApiEnvelope<T>>(url, body);
   return response.data.data;

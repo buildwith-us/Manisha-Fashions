@@ -6,7 +6,8 @@ import { ApiError } from '../utils/ApiError';
 
 /**
  * PRD 4.4 / 8.4 — Razorpay for UPI, cards, netbanking and wallets. COD skips
- * the gateway entirely and adds a flat shipping charge instead.
+ * the gateway entirely and adds a shipping charge instead — see cod.service,
+ * which owns whether COD is offered at all and what it costs in each state.
  */
 
 export interface RazorpayOrderHandle {
@@ -82,9 +83,4 @@ function timingSafeEqual(a: string, b: string): boolean {
   const bufferB = Buffer.from(b, 'utf8');
   if (bufferA.length !== bufferB.length) return false;
   return crypto.timingSafeEqual(bufferA, bufferB);
-}
-
-/** COD adds a flat shipping charge; prepaid orders ship free (PRD 4.4). */
-export function shippingChargeFor(paymentMethod: 'razorpay' | 'cod'): number {
-  return paymentMethod === 'cod' ? env.COD_SHIPPING_CHARGE : env.PREPAID_SHIPPING_CHARGE;
 }

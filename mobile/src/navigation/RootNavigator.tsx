@@ -17,6 +17,7 @@ import { AddressFormScreen } from '../screens/customer/AddressFormScreen';
 import { ProfileScreen } from '../screens/shared/ProfileScreen';
 import { AdminProductFormScreen } from '../screens/admin/AdminProductFormScreen';
 import { AdminCategoriesScreen } from '../screens/admin/AdminCategoriesScreen';
+import { AdminCodSettingsScreen } from '../screens/admin/AdminCodSettingsScreen';
 import { AdminOrderDetailScreen } from '../screens/admin/AdminOrderDetailScreen';
 import { AdminUsersScreen } from '../screens/admin/AdminUsersScreen';
 import { useAppSelector } from '../store/hooks';
@@ -95,6 +96,7 @@ export function RootNavigator() {
             <Stack.Screen name="AdminCategories" component={AdminCategoriesScreen} />
             <Stack.Screen name="AdminOrderDetail" component={AdminOrderDetailScreen} />
             <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
+            <Stack.Screen name="AdminCodSettings" component={AdminCodSettingsScreen} />
             <Stack.Screen name="ProductDetail" component={ProductDetailScreen} />
             <Stack.Screen name="Profile" component={ProfileScreen} />
           </Stack.Group>

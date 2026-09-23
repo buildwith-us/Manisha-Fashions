@@ -10,6 +10,7 @@ import { ApiError } from '../utils/ApiError';
 import { isProductVisibleTo } from '../utils/rbac';
 import { ORDER_STATUS_TRANSITIONS, type OrderStatus, type PaymentMethod } from '../types';
 import type { AuthenticatedUser } from '../types';
+import * as codService from './cod.service';
 import * as paymentService from './payment.service';
 
 /* ── Serialization ──────────────────────────────────────────────────────── */
@@ -126,7 +127,8 @@ export interface CheckoutResult {
  *
  * Prices are read from the product documents at the buyer's tier and frozen
  * onto the order as priceAtOrder (PRD 8.2 price protection). The client never
- * supplies a price or a total.
+ * supplies a price or a total — and, since COD became state-dependent, never
+ * supplies the shipping charge or the state it is derived from either.
  */
 export async function checkout(
   viewer: AuthenticatedUser,
@@ -189,7 +191,12 @@ export async function checkout(
   }
 
   const subtotal = items.reduce((sum, item) => sum + item.priceAtOrder * item.quantity, 0);
-  const shippingCharge = paymentService.shippingChargeFor(input.paymentMethod);
+  // Shipping is priced from the *saved* address's state, never from anything
+  // the client sent: the request carries an address id and a payment method
+  // and nothing else, so a COD charge cannot be lowered and COD cannot be
+  // forced in a state where the store has switched it off. A disabled state
+  // throws COD_UNAVAILABLE here, before any stock is reserved.
+  const { shippingCharge } = await codService.resolveShipping(input.paymentMethod, address.state);
   const totalAmount = subtotal + shippingCharge;
 
   // Reserve stock before creating the order so two concurrent checkouts cannot

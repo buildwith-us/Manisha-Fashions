@@ -34,6 +34,20 @@ export function useGoogleSignIn(onOutcome: (outcome: GoogleSignInOutcome) => voi
   const [request, response, promptAsync] = Google.useIdTokenAuthRequest(clientIds);
   const [pending, setPending] = useState(false);
 
+  // TEMPORARY — remove once Google sign-in is confirmed working.
+  //
+  // Prints the exact values this build sends to Google. `request` is the
+  // object the library actually authorises with, so these are the real
+  // parameters rather than a re-derivation that could drift from them. The
+  // redirect URI has to match the Android OAuth client's package name
+  // character for character, which is worth seeing rather than assuming.
+  useEffect(() => {
+    if (!request) return;
+    console.log('[google-oauth] redirectUri  :', request.redirectUri);
+    console.log('[google-oauth] clientId     :', request.clientId);
+    console.log('[google-oauth] responseType :', request.responseType);
+  }, [request]);
+
   useEffect(() => {
     if (!response) return;
     setPending(false);
