@@ -1,7 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import request from 'supertest';
-import type { Application } from 'express';
-import { API, resetDb, startTestApp, stopTestApp } from './helpers';
+import { api, clearTestDb, connectTestDb, disconnectTestDb, request } from './helpers/testServer';
 
 interface ResetEmailInput {
   to: string;
@@ -9,50 +6,46 @@ interface ResetEmailInput {
   expiresInMinutes: number;
 }
 
-const sendPasswordResetEmail = vi.fn(async (_input: ResetEmailInput) => ({ delivered: true }));
-vi.mock('../services/email.service', () => ({
-  sendPasswordResetEmail: (input: ResetEmailInput) => sendPasswordResetEmail(input),
+const mockSendPasswordResetEmail = jest.fn(async (_input: ResetEmailInput) => ({ delivered: true }));
+jest.mock('../services/email.service', () => ({
+  sendPasswordResetEmail: (input: ResetEmailInput) => mockSendPasswordResetEmail(input),
 }));
 
-let app: Application;
 
 const ACCOUNT = { email: 'meera@example.com', password: 'Marigold42', name: 'Meera' };
 
 async function registerAccount() {
-  return request(app).post(`${API}/auth/register`).send(ACCOUNT);
+  return request.post(api('/auth/register')).send(ACCOUNT);
 }
 
 /** The 6-digit code handed to the email service on the most recent send. */
 function lastCode(): string {
-  const call = sendPasswordResetEmail.mock.calls.at(-1)?.[0];
+  const call = mockSendPasswordResetEmail.mock.calls.at(-1)?.[0];
   if (!call) throw new Error('No reset email was sent');
   return call.code;
 }
 
 /** Walks steps 1–2 and returns the short-lived token from the verify step. */
 async function getResetToken(): Promise<string> {
-  await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
-  const res = await request(app)
-    .post(`${API}/auth/verify-reset-otp`)
+  await request.post(api('/auth/forgot-password')).send({ email: ACCOUNT.email });
+  const res = await request.post(api('/auth/verify-reset-otp'))
     .send({ email: ACCOUNT.email, otp: lastCode() });
   return res.body.data.resetToken;
 }
 
-beforeAll(async () => {
-  app = await startTestApp();
-});
-afterAll(stopTestApp);
+beforeAll(connectTestDb);
+afterAll(disconnectTestDb);
 afterEach(async () => {
-  sendPasswordResetEmail.mockClear();
-  await resetDb();
+  mockSendPasswordResetEmail.mockClear();
+  await clearTestDb();
 });
 
 describe('POST /auth/forgot-password', () => {
   it('emails a 6-digit code, not a link', async () => {
     await registerAccount();
-    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
+    await request.post(api('/auth/forgot-password')).send({ email: ACCOUNT.email });
 
-    const call = sendPasswordResetEmail.mock.calls.at(-1)?.[0];
+    const call = mockSendPasswordResetEmail.mock.calls.at(-1)?.[0];
     expect(call?.code).toMatch(/^\d{6}$/);
     expect(call).not.toHaveProperty('resetUrl');
   });
@@ -60,30 +53,30 @@ describe('POST /auth/forgot-password', () => {
   it('gives an identical response for registered and unregistered emails', async () => {
     await registerAccount();
 
-    const known = await request(app).post(`${API}/auth/forgot-password`).send({
+    const known = await request.post(api('/auth/forgot-password')).send({
       email: ACCOUNT.email,
     });
-    const unknown = await request(app).post(`${API}/auth/forgot-password`).send({
+    const unknown = await request.post(api('/auth/forgot-password')).send({
       email: 'nobody@example.com',
     });
 
     expect(known.status).toBe(unknown.status);
     expect(known.body).toEqual(unknown.body);
     // ...and only the real account actually triggers an email.
-    expect(sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendPasswordResetEmail).toHaveBeenCalledTimes(1);
   });
 
   it('allows 3 requests per hour then refuses the 4th', async () => {
     await registerAccount();
 
     for (let i = 0; i < 3; i += 1) {
-      const ok = await request(app).post(`${API}/auth/forgot-password`).send({
+      const ok = await request.post(api('/auth/forgot-password')).send({
         email: ACCOUNT.email,
       });
       expect(ok.status).toBe(200);
     }
 
-    const blocked = await request(app).post(`${API}/auth/forgot-password`).send({
+    const blocked = await request.post(api('/auth/forgot-password')).send({
       email: ACCOUNT.email,
     });
     expect(blocked.status).toBe(429);
@@ -93,9 +86,9 @@ describe('POST /auth/forgot-password', () => {
   it('counts unregistered addresses against the quota too', async () => {
     // Otherwise the rate limit itself reveals which addresses exist.
     for (let i = 0; i < 3; i += 1) {
-      await request(app).post(`${API}/auth/forgot-password`).send({ email: 'ghost@example.com' });
+      await request.post(api('/auth/forgot-password')).send({ email: 'ghost@example.com' });
     }
-    const blocked = await request(app).post(`${API}/auth/forgot-password`).send({
+    const blocked = await request.post(api('/auth/forgot-password')).send({
       email: 'ghost@example.com',
     });
     expect(blocked.status).toBe(429);
@@ -105,10 +98,9 @@ describe('POST /auth/forgot-password', () => {
 describe('POST /auth/verify-reset-otp', () => {
   it('accepts the emailed code and returns a reset token', async () => {
     await registerAccount();
-    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
+    await request.post(api('/auth/forgot-password')).send({ email: ACCOUNT.email });
 
-    const res = await request(app)
-      .post(`${API}/auth/verify-reset-otp`)
+    const res = await request.post(api('/auth/verify-reset-otp'))
       .send({ email: ACCOUNT.email, otp: lastCode() });
 
     expect(res.status).toBe(200);
@@ -117,7 +109,7 @@ describe('POST /auth/verify-reset-otp', () => {
 
   it('rejects an expired code', async () => {
     await registerAccount();
-    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
+    await request.post(api('/auth/forgot-password')).send({ email: ACCOUNT.email });
     const code = lastCode();
 
     // Wind the stored expiry into the past rather than waiting 10 minutes.
@@ -127,8 +119,7 @@ describe('POST /auth/verify-reset-otp', () => {
       { $set: { passwordResetOtpExpiresAt: new Date(Date.now() - 1000) } },
     );
 
-    const res = await request(app)
-      .post(`${API}/auth/verify-reset-otp`)
+    const res = await request.post(api('/auth/verify-reset-otp'))
       .send({ email: ACCOUNT.email, otp: code });
 
     expect(res.status).toBe(401);
@@ -137,10 +128,10 @@ describe('POST /auth/verify-reset-otp', () => {
 
   it('counts wrong codes down and locks the email after 5', async () => {
     await registerAccount();
-    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
+    await request.post(api('/auth/forgot-password')).send({ email: ACCOUNT.email });
 
     const wrong = (otp: string) =>
-      request(app).post(`${API}/auth/verify-reset-otp`).send({ email: ACCOUNT.email, otp });
+      request.post(api('/auth/verify-reset-otp')).send({ email: ACCOUNT.email, otp });
 
     for (let attempt = 1; attempt <= 4; attempt += 1) {
       const res = await wrong('000000');
@@ -156,24 +147,21 @@ describe('POST /auth/verify-reset-otp', () => {
 
   it('refuses the correct code once the email is locked out', async () => {
     await registerAccount();
-    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
+    await request.post(api('/auth/forgot-password')).send({ email: ACCOUNT.email });
     const code = lastCode();
 
     for (let i = 0; i < 5; i += 1) {
-      await request(app)
-        .post(`${API}/auth/verify-reset-otp`)
+      await request.post(api('/auth/verify-reset-otp'))
         .send({ email: ACCOUNT.email, otp: '000000' });
     }
 
-    const res = await request(app)
-      .post(`${API}/auth/verify-reset-otp`)
+    const res = await request.post(api('/auth/verify-reset-otp'))
       .send({ email: ACCOUNT.email, otp: code });
     expect(res.status).toBe(429);
   });
 
   it('does not reveal whether an unregistered email has a code pending', async () => {
-    const res = await request(app)
-      .post(`${API}/auth/verify-reset-otp`)
+    const res = await request.post(api('/auth/verify-reset-otp'))
       .send({ email: 'ghost@example.com', otp: '123456' });
 
     expect(res.status).toBe(401);
@@ -182,12 +170,11 @@ describe('POST /auth/verify-reset-otp', () => {
 
   it('consumes the code, so it cannot be verified twice', async () => {
     await registerAccount();
-    await request(app).post(`${API}/auth/forgot-password`).send({ email: ACCOUNT.email });
+    await request.post(api('/auth/forgot-password')).send({ email: ACCOUNT.email });
     const code = lastCode();
 
-    await request(app).post(`${API}/auth/verify-reset-otp`).send({ email: ACCOUNT.email, otp: code });
-    const replay = await request(app)
-      .post(`${API}/auth/verify-reset-otp`)
+    await request.post(api('/auth/verify-reset-otp')).send({ email: ACCOUNT.email, otp: code });
+    const replay = await request.post(api('/auth/verify-reset-otp'))
       .send({ email: ACCOUNT.email, otp: code });
 
     expect(replay.status).toBe(401);
@@ -199,19 +186,19 @@ describe('POST /auth/reset-password', () => {
     await registerAccount();
     const token = await getResetToken();
 
-    const res = await request(app).post(`${API}/auth/reset-password`).send({
+    const res = await request.post(api('/auth/reset-password')).send({
       token,
       password: 'Jasmine9000',
     });
     expect(res.status).toBe(200);
 
-    const relogin = await request(app).post(`${API}/auth/login`).send({
+    const relogin = await request.post(api('/auth/login')).send({
       email: ACCOUNT.email,
       password: 'Jasmine9000',
     });
     expect(relogin.status).toBe(200);
 
-    const stale = await request(app).post(`${API}/auth/login`).send(ACCOUNT);
+    const stale = await request.post(api('/auth/login')).send(ACCOUNT);
     expect(stale.status).toBe(401);
   });
 
@@ -219,8 +206,8 @@ describe('POST /auth/reset-password', () => {
     await registerAccount();
     const token = await getResetToken();
 
-    await request(app).post(`${API}/auth/reset-password`).send({ token, password: 'Jasmine9000' });
-    const replay = await request(app).post(`${API}/auth/reset-password`).send({
+    await request.post(api('/auth/reset-password')).send({ token, password: 'Jasmine9000' });
+    const replay = await request.post(api('/auth/reset-password')).send({
       token,
       password: 'Different111',
     });
@@ -238,7 +225,7 @@ describe('POST /auth/reset-password', () => {
       { $set: { passwordResetTokenExpiresAt: new Date(Date.now() - 1000) } },
     );
 
-    const res = await request(app).post(`${API}/auth/reset-password`).send({
+    const res = await request.post(api('/auth/reset-password')).send({
       token,
       password: 'Jasmine9000',
     });
@@ -247,7 +234,7 @@ describe('POST /auth/reset-password', () => {
   });
 
   it('refuses a token that was never issued', async () => {
-    const res = await request(app).post(`${API}/auth/reset-password`).send({
+    const res = await request.post(api('/auth/reset-password')).send({
       token: 'z'.repeat(43),
       password: 'Jasmine9000',
     });
@@ -259,12 +246,12 @@ describe('POST /auth/reset-password', () => {
     const oldRefresh = registered.body.data.refreshToken;
 
     const token = await getResetToken();
-    await request(app).post(`${API}/auth/reset-password`).send({
+    await request.post(api('/auth/reset-password')).send({
       token,
       password: 'Jasmine9000',
     });
 
-    const refreshed = await request(app).post(`${API}/auth/refresh`).send({
+    const refreshed = await request.post(api('/auth/refresh')).send({
       refreshToken: oldRefresh,
     });
     expect(refreshed.status).toBe(401);
