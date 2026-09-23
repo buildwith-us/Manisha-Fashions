@@ -22,9 +22,9 @@ process.env.PREPAID_SHIPPING_CHARGE = '0';
 process.env.RATE_LIMIT_GENERAL_PER_MIN = '100000';
 process.env.RATE_LIMIT_AUTH_PER_MIN = '100000';
 
-// Google sign-in: the verifier is mocked in the specs, but config/env.ts still
-// refuses to treat the feature as configured without an audience list.
-process.env.GOOGLE_CLIENT_IDS = 'test-web-client.apps.googleusercontent.com';
+// Google sign-in: the verifier is mocked in the specs, but the service still
+// refuses to run without an audience configured.
+process.env.GOOGLE_WEB_CLIENT_ID = 'test-web-client.apps.googleusercontent.com';
 
 // Admin is granted by this list on every sign-in. Mixed case and padding on
 // purpose — the whitelist must normalise both.

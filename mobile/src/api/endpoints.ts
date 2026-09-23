@@ -76,7 +76,7 @@ export const authApi = {
   login: (input: { email: string; password: string; deviceId?: string }) =>
     post<AuthResult>('/auth/login', input),
 
-  /** The Google ID token is verified server-side; the client never decodes it. */
+  /** Exchanges a native Google ID token for the same session a password login gets. */
   google: (input: { idToken: string; deviceId?: string }) =>
     post<AuthResult>('/auth/google', input),
 

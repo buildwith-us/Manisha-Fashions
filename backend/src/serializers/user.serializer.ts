@@ -9,6 +9,7 @@ export interface SerializedUser {
   authProviders: IUser['authProviders'];
   name?: string;
   email?: string;
+  avatar?: string;
   accountType: IUser['accountType'];
   wholesaleStatus: IUser['wholesaleStatus'];
   business?: {
@@ -65,6 +66,7 @@ export function serializeUser(user: IUser): SerializedUser {
     authProviders: user.authProviders ?? [],
     name: user.name,
     email: user.email,
+    avatar: user.avatar,
     accountType: user.accountType,
     wholesaleStatus: user.wholesaleStatus,
     ...(user.business

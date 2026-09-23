@@ -31,7 +31,12 @@ export interface IUser extends Document<Types.ObjectId> {
   phone?: string;
   name?: string;
   email?: string;
-  /** bcrypt hash; `select: false`, so it never rides along on an ordinary read. */
+  /** Profile photo URL; only Google supplies one today. */
+  avatar?: string;
+  /**
+   * bcrypt hash. Absent on accounts created by Google sign-in (and by
+   * `make-admin`) until a password is set through the reset flow.
+   * `select: false`, so it never rides along on an ordinary read.; `select: false`, so it never rides along on an ordinary read. */
   passwordHash?: string;
   /** Google's stable `sub` claim, not the email — the email can change. */
   googleId?: string;
@@ -95,6 +100,7 @@ const userSchema = new Schema<IUser>(
     name: { type: String, trim: true, maxlength: 80 },
     // Unique now that it is a login credential and the key Google links on.
     email: { type: String, trim: true, lowercase: true, maxlength: 160, unique: true, sparse: true },
+    avatar: { type: String, trim: true, maxlength: 500 },
     passwordHash: { type: String, select: false },
     googleId: { type: String, unique: true, sparse: true },
     authProviders: {

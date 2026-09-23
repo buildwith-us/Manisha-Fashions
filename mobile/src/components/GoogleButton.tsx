@@ -1,55 +1,36 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import { colors, spacing, typography } from '../theme';
+import { Button } from './ui';
 
 /**
- * Google's branding guidelines require their own mark and a neutral white or
- * grey button — so this deliberately does *not* take the app's coral gradient
- * the way the primary action button does. Shape, height and radius still match
- * the design system so the two read as a pair.
+ * "Continue with Google" — the shared Button in its outline variant, so height,
+ * radius and type match the email button above it. Google's branding asks for
+ * its own mark on a neutral surface, never the app accent.
  */
 export function GoogleButton({
   onPress,
   loading = false,
   disabled = false,
-  label = 'Continue with Google',
 }: {
   onPress: () => void;
   loading?: boolean;
   disabled?: boolean;
-  label?: string;
 }) {
-  const isDisabled = disabled || loading;
-
   return (
-    <Pressable
+    <Button
+      label="Continue with Google"
+      variant="outline"
+      icon={<GoogleMark />}
       onPress={onPress}
-      disabled={isDisabled}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled: isDisabled, busy: loading }}
-      style={({ pressed }) => [
-        styles.button,
-        pressed && !isDisabled ? styles.pressed : null,
-        isDisabled ? styles.disabled : null,
-      ]}
-    >
-      {loading ? (
-        <ActivityIndicator color={colors.textMuted} />
-      ) : (
-        <View style={styles.content}>
-          <GoogleMark />
-          <Text style={styles.label}>{label}</Text>
-        </View>
-      )}
-    </Pressable>
+      loading={loading}
+      disabled={disabled}
+    />
   );
 }
 
-/** The four-colour "G", per Google's mark. */
+/** The four-colour "G". */
 function GoogleMark() {
   return (
-    <Svg width={18} height={18} viewBox="0 0 48 48">
+    <Svg width={18} height={18} viewBox="0 0 48 48" accessibilityElementsHidden importantForAccessibility="no">
       <Path
         fill="#4285F4"
         d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"
@@ -69,22 +50,3 @@ function GoogleMark() {
     </Svg>
   );
 }
-
-const styles = StyleSheet.create({
-  button: {
-    height: 52,
-    borderRadius: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-  },
-  pressed: { backgroundColor: colors.surfacePressed },
-  disabled: { opacity: 0.5 },
-  content: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  label: {
-    ...typography.heading,
-    color: colors.text,
-  },
-});

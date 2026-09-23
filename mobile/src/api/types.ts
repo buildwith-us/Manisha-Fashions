@@ -51,6 +51,8 @@ export interface User {
   authProviders: AuthProvider[];
   name?: string;
   email?: string;
+  /** Profile photo; set from Google on accounts that signed in with it. */
+  avatar?: string;
   accountType: AccountType;
   wholesaleStatus: WholesaleStatus;
   business?: {

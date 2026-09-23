@@ -3,19 +3,20 @@ import { env, googleAuthConfigured } from '../config/env';
 import { ApiError } from '../utils/ApiError';
 
 /**
- * Server-side verification of a Google ID token (PRD 8.7).
+ * Server-side verification of a Google ID token from native sign-in.
  *
  * The client is never trusted to report who it is: the raw ID token is
- * verified against Google's public keys here, and only the decoded payload is
- * used. A token minted for somebody else's app fails the audience check.
+ * verified against Google's public keys here (signature, expiry, issuer), and
+ * only the decoded payload is used. A token minted for another app fails the
+ * audience check.
  */
 const client = new OAuth2Client();
 
 export interface GoogleIdentity {
   googleId: string;
   email: string;
-  emailVerified: boolean;
   name?: string;
+  picture?: string;
 }
 
 export async function verifyGoogleIdToken(idToken: string): Promise<GoogleIdentity> {
@@ -27,8 +28,9 @@ export async function verifyGoogleIdToken(idToken: string): Promise<GoogleIdenti
   try {
     const ticket = await client.verifyIdToken({
       idToken,
-      // All three platform client ids are accepted — see GOOGLE_CLIENT_IDS.
-      audience: env.GOOGLE_CLIENT_IDS,
+      // The WEB client id: native Android sign-in is configured with it as
+      // `webClientId`, so it is what Google stamps into `aud`.
+      audience: env.GOOGLE_WEB_CLIENT_ID,
     });
     payload = ticket.getPayload();
   } catch {
@@ -39,9 +41,9 @@ export async function verifyGoogleIdToken(idToken: string): Promise<GoogleIdenti
     throw ApiError.unauthorized('Google did not return an email address.', 'GOOGLE_TOKEN_INVALID');
   }
 
-  // An unverified Google email must not be able to claim an existing account:
-  // linking is done by email, so this is the check that stops takeover.
-  if (!payload.email_verified) {
+  // Linking is done by email, so an unverified Google email must never be
+  // able to claim an existing account. Strictly `true`, not merely truthy.
+  if (payload.email_verified !== true) {
     throw ApiError.unauthorized(
       'Your Google email address is not verified.',
       'GOOGLE_EMAIL_UNVERIFIED',
@@ -51,7 +53,7 @@ export async function verifyGoogleIdToken(idToken: string): Promise<GoogleIdenti
   return {
     googleId: payload.sub,
     email: payload.email.toLowerCase(),
-    emailVerified: true,
     name: payload.name,
+    picture: payload.picture,
   };
 }

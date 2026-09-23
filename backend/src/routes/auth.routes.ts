@@ -34,8 +34,9 @@ router.post('/logout', validate({ body: logoutSchema }), authController.logout);
 router.post('/register', validate({ body: registerSchema }), authLimiter, authController.register);
 router.post('/login', validate({ body: passwordLoginSchema }), authLimiter, authController.login);
 
-// ── Google Sign-In ──
-router.post('/google', validate({ body: googleLoginSchema }), authLimiter, authController.googleLogin);
+// ── Google (native ID token, verified server-side) ──
+router.post('/google', validate({ body: googleLoginSchema }), authLimiter, authController.google);
+
 
 // ── Password reset ──
 // The 3/hour quota per email and per IP lives in the service, keyed by both,

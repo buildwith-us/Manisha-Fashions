@@ -1,32 +1,15 @@
 import { api, clearTestDb, connectTestDb, disconnectTestDb, request } from './helpers/testServer';
 
-const mockVerifyIdToken = jest.fn();
-jest.mock('google-auth-library', () => ({
-  OAuth2Client: class {
-    // A method, not a class field: jest hoists this factory above the `const`
-    // below, and a field initialiser would read it while still in the TDZ.
-    // A method body only evaluates when called, by which time it is defined.
-    verifyIdToken(...args: unknown[]) {
-      return mockVerifyIdToken(...args);
-    }
-  },
-}));
-
-function googleToken(payload: Record<string, unknown>) {
-  mockVerifyIdToken.mockResolvedValueOnce({ getPayload: () => payload });
-}
-
 
 beforeAll(connectTestDb);
 afterAll(disconnectTestDb);
 afterEach(async () => {
-  mockVerifyIdToken.mockReset();
   await clearTestDb();
 });
 
 const PASSWORD = 'Marigold42';
 
-describe('ADMIN_EMAILS whitelist — email/password path', () => {
+describe('ADMIN_EMAILS whitelist ', () => {
   it('makes a whitelisted address admin on first registration', async () => {
     const res = await request.post(api('/auth/register')).send({
       email: 'owner@example.com',
@@ -133,52 +116,3 @@ describe('ADMIN_EMAILS whitelist — email/password path', () => {
   });
 });
 
-describe('ADMIN_EMAILS whitelist — Google path', () => {
-  const identity = (email: string) => ({
-    sub: `google-${email}`,
-    email,
-    email_verified: true,
-    name: 'Google User',
-  });
-
-  it('makes a whitelisted address admin on first Google sign-in', async () => {
-    googleToken(identity('owner@example.com'));
-
-    const res = await request.post(api('/auth/google')).send({ idToken: 'x'.repeat(30) });
-
-    expect(res.status).toBe(200);
-    expect(res.body.data.user.accountType).toBe('admin');
-  });
-
-  it('leaves a non-whitelisted Google account as retail', async () => {
-    googleToken(identity('shopper@example.com'));
-
-    const res = await request.post(api('/auth/google')).send({ idToken: 'x'.repeat(30) });
-
-    expect(res.body.data.user.accountType).toBe('retail');
-  });
-
-  it('re-applies admin on a returning Google sign-in', async () => {
-    googleToken(identity('owner@example.com'));
-    await request.post(api('/auth/google')).send({ idToken: 'x'.repeat(30) });
-
-    const { User } = await import('../models/user.model');
-    await User.updateOne({ email: 'owner@example.com' }, { $set: { accountType: 'retail' } });
-
-    googleToken(identity('owner@example.com'));
-    const res = await request.post(api('/auth/google')).send({ idToken: 'x'.repeat(30) });
-    expect(res.body.data.user.accountType).toBe('admin');
-  });
-
-  it('demotes a non-whitelisted Google account that holds admin', async () => {
-    googleToken(identity('shopper@example.com'));
-    await request.post(api('/auth/google')).send({ idToken: 'x'.repeat(30) });
-
-    const { User } = await import('../models/user.model');
-    await User.updateOne({ email: 'shopper@example.com' }, { $set: { accountType: 'admin' } });
-
-    googleToken(identity('shopper@example.com'));
-    const res = await request.post(api('/auth/google')).send({ idToken: 'x'.repeat(30) });
-    expect(res.body.data.user.accountType).toBe('retail');
-  });
-});

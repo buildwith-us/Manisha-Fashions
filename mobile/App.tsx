@@ -5,6 +5,10 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { store } from './src/store';
 import { bootstrapSession } from './src/store/slices/authSlice';
+import { configureGoogle } from './src/services/googleAuth';
+
+// Once, before anything can ask for a sign-in.
+configureGoogle();
 
 function AppBootstrap() {
   useEffect(() => {

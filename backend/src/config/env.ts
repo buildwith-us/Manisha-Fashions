@@ -89,13 +89,15 @@ const envSchema = z.object({
 
   // ── Google Sign-In ──
   /**
-   * Accepted `aud` values for a Google ID token, comma-separated.
+   * The WEB OAuth client id (…apps.googleusercontent.com), used as the only
+   * accepted `aud` of a Google ID token.
    *
-   * Deliberately plural: the Android, iOS and Web OAuth clients each mint
-   * tokens carrying their *own* client id, so a single value would reject
-   * sign-ins from two of the three platforms. `verifyIdToken` takes the list.
+   * The Android app signs in natively and is configured with this same web
+   * client id (`webClientId`), so the tokens it mints carry the web id as their
+   * audience. The Android OAuth client must exist in Cloud Console, but its id
+   * never appears in a token and is not configured here.
    */
-  GOOGLE_CLIENT_IDS: z.string().default('').transform(csv),
+  GOOGLE_WEB_CLIENT_ID: blankable(z.string().trim().optional()),
 
   // ── Transactional email (Gmail SMTP via nodemailer) ──
   SMTP_USER: blankable(z.string().email('SMTP_USER must be an email address').optional()),
@@ -136,19 +138,19 @@ export const env = parsed.data;
 export const isProduction = env.NODE_ENV === 'production';
 export const isDevelopment = env.NODE_ENV === 'development';
 
-export const googleAuthConfigured = env.GOOGLE_CLIENT_IDS.length > 0;
 export const emailConfigured = Boolean(env.SMTP_USER && env.SMTP_APP_PASSWORD);
+export const googleAuthConfigured = Boolean(env.GOOGLE_WEB_CLIENT_ID);
 
 /**
  * Features that may run degraded in development but must never ship half-configured.
  *
- * Google sign-in without client ids would accept no token at all, and password
- * reset without SMTP would silently drop the email while still telling the
- * user one was sent — a worse failure than refusing to boot.
+ * Password reset without SMTP would silently drop the email while still
+ * telling the user one was sent — a worse failure than refusing to boot.
+ * Google sign-in without a web client id would reject every token.
  */
 if (isProduction) {
   const missing: string[] = [];
-  if (!googleAuthConfigured) missing.push('GOOGLE_CLIENT_IDS');
+  if (!googleAuthConfigured) missing.push('GOOGLE_WEB_CLIENT_ID');
   if (!env.SMTP_USER) missing.push('SMTP_USER');
   if (!env.SMTP_APP_PASSWORD) missing.push('SMTP_APP_PASSWORD');
   if (missing.length > 0) {
@@ -156,6 +158,15 @@ if (isProduction) {
       `Invalid environment configuration: ${missing.join(', ')} must be set in production.`,
     );
   }
+}
+
+// Outside production the API still boots, but Google sign-in answers 503 until
+// this is set. Said loudly here because the app's error is deliberately vague.
+// console, not the logger: logger.ts imports this module.
+if (!googleAuthConfigured && env.NODE_ENV === 'development') {
+  console.error(
+    '[config] GOOGLE_WEB_CLIENT_ID is not set — POST /auth/google will fail until it is.',
+  );
 }
 
 export const razorpayConfigured = Boolean(env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET);

@@ -1,11 +1,10 @@
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Button, ErrorBanner, Input, Screen, Segmented } from '../../components/ui';
 import { GoogleButton } from '../../components/GoogleButton';
 import { PressableScale } from '../../components/motion';
-import { useGoogleSignIn, type GoogleSignInOutcome } from '../../hooks/useGoogleSignIn';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
   clearError,
@@ -20,10 +19,10 @@ import type { RootStackParamList } from '../../navigation/types';
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Login'>;
 
 /**
- * The only sign-in screen: email + password, or Google.
+ * The only sign-in screen: email + password, or native Google Sign-In.
  *
- * Phone + OTP was removed — there is no SMS provider in the system any more,
- * so this is not an alternate route reachable behind a link, it is the route.
+ * Both paths end in the same session state, so the navigator routes by the
+ * server-returned role without knowing which one was used.
  *
  * The Retail/Wholesale choice appears only while creating an account. Account
  * type is a property of signup, not of signing in, and showing it on the
@@ -41,29 +40,14 @@ export function LoginScreen() {
   const [gstNumber, setGstNumber] = useState('');
   const [isRegister, setIsRegister] = useState(false);
   const [touched, setTouched] = useState(false);
-  const [googleError, setGoogleError] = useState<string | null>(null);
+  // Separate from the store's `loading`, which drives the email button.
+  const [googlePending, setGooglePending] = useState(false);
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   // Only enforced when creating an account — an older password must still work.
   const passwordValid = isRegister
     ? password.length >= 8 && /[A-Za-z]/.test(password) && /\d/.test(password)
     : password.length > 0;
-
-  const handleGoogleOutcome = useCallback(
-    (outcome: GoogleSignInOutcome) => {
-      // Closing the picker is a normal choice: no error, no state change.
-      if (outcome.type === 'cancelled') return;
-      if (outcome.type === 'error') {
-        setGoogleError(outcome.message);
-        return;
-      }
-      setGoogleError(null);
-      void dispatch(loginWithGoogle({ idToken: outcome.idToken }));
-    },
-    [dispatch],
-  );
-
-  const google = useGoogleSignIn(handleGoogleOutcome);
 
   const handleSubmit = async () => {
     setTouched(true);
@@ -76,10 +60,19 @@ export function LoginScreen() {
     }
   };
 
+  const handleGoogle = async () => {
+    if (googlePending) return;
+    setGooglePending(true);
+    try {
+      await dispatch(loginWithGoogle());
+    } finally {
+      setGooglePending(false);
+    }
+  };
+
   const toggleMode = () => {
     setIsRegister((current) => !current);
     setTouched(false);
-    setGoogleError(null);
     dispatch(clearError());
   };
 
@@ -113,7 +106,7 @@ export function LoginScreen() {
           : 'Sign in with your email and password, or continue with Google.'}
       </Text>
 
-      {error ?? googleError ? <ErrorBanner message={(error ?? googleError) as string} /> : null}
+      {error ? <ErrorBanner message={error} /> : null}
 
       {isRegister ? (
         <View style={styles.segmentBlock}>
@@ -200,6 +193,7 @@ export function LoginScreen() {
         label={isRegister ? 'Create account' : 'Sign in'}
         onPress={handleSubmit}
         loading={loading}
+        disabled={googlePending}
       />
 
       <View style={styles.dividerRow}>
@@ -208,9 +202,7 @@ export function LoginScreen() {
         <View style={styles.dividerLine} />
       </View>
 
-      {/* Google's own mark and neutral surface, per their branding guidelines —
-          intentionally not the app's coral primary. */}
-      <GoogleButton onPress={google.signIn} loading={google.pending} disabled={!google.ready} />
+      <GoogleButton onPress={handleGoogle} loading={googlePending} disabled={loading} />
 
       <PressableScale
         onPress={toggleMode}

@@ -54,8 +54,13 @@ export const passwordLoginSchema = z.object({
   deviceId: z.string().max(120).optional(),
 });
 
+/**
+ * `idToken` is deliberately not required here: a missing token is answered
+ * with a 400 by the controller, not the generic 422 this middleware produces
+ * for a malformed body.
+ */
 export const googleLoginSchema = z.object({
-  idToken: z.string().min(20, 'A Google ID token is required'),
+  idToken: z.string().trim().max(4096).optional(),
   deviceId: z.string().max(120).optional(),
 });
 

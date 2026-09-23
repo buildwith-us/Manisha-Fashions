@@ -5,10 +5,7 @@
     "version": "3.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "scheme": [
-      "manishafashions",
-      "in.manishafashions.app"
-    ],
+    "scheme": "manishafashions",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
@@ -43,11 +40,17 @@
         }
       ],
       "./plugins/withDevCleartext",
-      "expo-web-browser"
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.REPLACE_WITH_IOS_CLIENT_ID"
+        }
+      ]
     ],
     "extra": {
       "//": "Point apiUrl at your deployed API before building. Leave unset in local dev to use the per-platform localhost default (10.0.2.2 on the Android emulator).",
       "apiUrl": "https://manisha-fashion-backend.onrender.com/api/v1",
+      "googleWebClientId": "REPLACE_WITH_WEB_CLIENT_ID.apps.googleusercontent.com",
       "eas": {
         "projectId": "0f41f5cb-2a39-4f88-86ca-eb84b9ab17a2"
       }

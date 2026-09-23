@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import * as authService from '../services/auth.service';
 import * as addressService from '../services/address.service';
+import { ApiError } from '../utils/ApiError';
 import { asyncHandler } from '../utils/asyncHandler';
 
 function loginContext(req: Request) {
@@ -40,7 +41,8 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
   res.success(result);
 });
 
-export const googleLogin = asyncHandler(async (req: Request, res: Response) => {
+export const google = asyncHandler(async (req: Request, res: Response) => {
+  if (!req.body.idToken) throw ApiError.badRequest('idToken is required.');
   const result = await authService.loginWithGoogle({
     idToken: req.body.idToken,
     context: loginContext(req),

@@ -189,9 +189,22 @@ export async function loginWithPassword(input: {
   // passwordHash is `select: false`, so it must be asked for explicitly.
   const user = await User.findOne({ email: email.toLowerCase() }).select('+passwordHash');
 
-  // One message and one timing profile for every failure mode — wrong password,
-  // no such account, or an account that only has Google/OTP credentials.
+  // One timing profile for every failure mode: the bcrypt compare runs even
+  // when there is no account or no hash to compare against.
   const matches = await passwordService.verifyPassword(password, user?.passwordHash ?? DUMMY_HASH);
+
+  // A Google-created account has no password until one is set through the
+  // reset flow. Saying so is friendlier than "incorrect password", at the cost
+  // of revealing that this address has a Google account here.
+  if (user && !user.passwordHash && user.googleId) {
+    throw ApiError.unauthorized(
+      'This account uses Google Sign-In. Continue with Google, or reset your password to set one.',
+      'GOOGLE_ACCOUNT_NO_PASSWORD',
+    );
+  }
+
+  // One message for everything else — wrong password, no such account, or an
+  // OTP-only account.
   if (!user || !user.passwordHash || !matches) {
     throw ApiError.unauthorized('Incorrect email or password.', 'INVALID_CREDENTIALS');
   }
@@ -208,9 +221,12 @@ export async function loginWithPassword(input: {
 }
 
 /**
- * Google sign-in. Matches on the stable `sub` first, then falls back to email
- * so a customer who originally signed up with a password is *linked* rather
- * than duplicated.
+ * Google sign-in from a verified native ID token.
+ *
+ * Matches on the stable `sub` first, then on email, so a customer who signed
+ * up with a password is linked rather than duplicated. Account type and
+ * wholesale status are never touched here beyond the ADMIN_EMAILS sync that
+ * every sign-in applies — a new Google account starts as plain retail.
  */
 export async function loginWithGoogle(input: {
   idToken: string;
@@ -225,18 +241,27 @@ export async function loginWithGoogle(input: {
     user = await User.findOne({ email: identity.email });
 
     if (user) {
-      // Existing password (or OTP) account — attach the Google credential to it.
+      // The address already belongs to an account linked to a *different*
+      // Google identity. Refuse rather than silently re-point the account.
+      if (user.googleId && user.googleId !== identity.googleId) {
+        throw ApiError.conflict(
+          'This email is linked to a different Google account. Sign in with your password instead.',
+        );
+      }
+      // Existing password (or OTP) account — attach the Google credential.
       user.googleId = identity.googleId;
       if (!user.authProviders.includes('google')) user.authProviders.push('google');
       if (!user.name && identity.name) user.name = identity.name;
+      if (!user.avatar && identity.picture) user.avatar = identity.picture;
     }
   }
 
   if (!user) {
-    // Note: no phone. That is why `phone` is sparse-unique on the model.
+    // No password and no phone — both fields are optional for this reason.
     user = await User.create({
       email: identity.email,
       name: identity.name,
+      avatar: identity.picture,
       googleId: identity.googleId,
       accountType: 'retail',
       wholesaleStatus: 'none',

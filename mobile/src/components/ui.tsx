@@ -768,7 +768,8 @@ export function StatusText({ label, color }: { label: string; color: string }) {
 
 /* ── Button ─────────────────────────────────────────────────────────────── */
 
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+/** `outline`: white surface, hairline border, ink label — for third-party sign-in. */
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline';
 
 export function Button({
   label,
@@ -778,11 +779,14 @@ export function Button({
   disabled = false,
   fullWidth = true,
   compact = false,
+  icon,
   style,
 }: {
   label: string;
   onPress: () => void;
   variant?: ButtonVariant;
+  /** Leading mark drawn before the label, e.g. a provider logo. */
+  icon?: ReactNode;
   loading?: boolean;
   disabled?: boolean;
   fullWidth?: boolean;
@@ -798,7 +802,7 @@ export function Button({
     ? isDisabled
       ? colors.fill
       : colors.primary
-    : variant === 'secondary'
+    : variant === 'secondary' || variant === 'outline'
       ? colors.surface
       : 'transparent';
 
@@ -806,7 +810,9 @@ export function Button({
     ? isDisabled
       ? colors.textOnDisabled
       : colors.textInverse
-    : colors.primary;
+    : variant === 'outline'
+      ? colors.text
+      : colors.primary;
 
   return (
     // Scale rather than the opacity dim it replaces: a 25% fade reads as
@@ -821,12 +827,19 @@ export function Button({
         compact && styles.buttonCompact,
         { backgroundColor: background, alignSelf: fullWidth ? 'stretch' : 'flex-start' },
         variant === 'secondary' && shadowSoft,
+        variant === 'outline' && styles.buttonOutline,
+        variant === 'outline' && isDisabled && !loading && styles.buttonOutlineDisabled,
         isFilled && !isDisabled && shadowAccent,
         style,
       ]}
     >
       {loading ? (
         <ActivityIndicator color={foreground} size="small" />
+      ) : icon ? (
+        <View style={styles.buttonContent}>
+          {icon}
+          <Text style={[styles.buttonLabel, { color: foreground }]}>{label}</Text>
+        </View>
       ) : (
         <Text style={[styles.buttonLabel, { color: foreground }]}>{label}</Text>
       )}
@@ -1303,6 +1316,9 @@ const styles = StyleSheet.create({
   },
   buttonCompact: { height: 40, borderRadius: radius.sm, paddingHorizontal: spacing.lg },
   buttonLabel: { ...typography.heading },
+  buttonOutline: { borderWidth: 1, borderColor: colors.borderStrong },
+  buttonOutlineDisabled: { opacity: 0.5 },
+  buttonContent: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
 
   field: { marginBottom: spacing.xl },
   fieldLabel: { ...typography.footnoteStrong, color: colors.textMuted, marginBottom: spacing.sm },

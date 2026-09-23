@@ -19,6 +19,12 @@ const [expoPackages, ...restOfPreset] = expoPreset.transformIgnorePatterns;
 module.exports = {
   preset: 'jest-expo',
   testMatch: ['<rootDir>/src/**/__tests__/**/*.test.{ts,tsx}'],
+  // The Google Sign-In library reads its native module on import; its own
+  // mock stands in for it (and for the Play Services calls) under Jest.
+  setupFiles: [
+    ...(expoPreset.setupFiles ?? []),
+    '<rootDir>/node_modules/@react-native-google-signin/google-signin/jest/build/jest/setup.js',
+  ],
   moduleNameMapper: {
     // Native module; see the mock for why.
     '^react-native-webview$': '<rootDir>/src/__mocks__/react-native-webview.tsx',

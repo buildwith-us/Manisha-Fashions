@@ -10,6 +10,7 @@ import {
   saveTokens,
 } from '../../api/tokenStorage';
 import type { Address, User } from '../../api/types';
+import { googleErrorMessage, signInWithGoogle, signOutGoogle } from '../../services/googleAuth';
 
 /**
  * PRD 8.1 authSlice — current user, phone number, account type and wholesale
@@ -140,10 +141,17 @@ export const loginWithPassword = createAsyncThunk<
   }
 });
 
-export const loginWithGoogle = createAsyncThunk<User, { idToken: string }, { rejectValue: string }>(
+/**
+ * Native Google sign-in, then the same token exchange and session path as a
+ * password login. Resolves with `null` when the user closed the picker — that
+ * is a normal choice, not an error, and leaves the state untouched.
+ */
+export const loginWithGoogle = createAsyncThunk<User | null, void, { rejectValue: string }>(
   'auth/loginWithGoogle',
-  async ({ idToken }, { rejectWithValue }) => {
+  async (_, { rejectWithValue }) => {
     try {
+      const idToken = await signInWithGoogle();
+      if (!idToken) return null;
       const result = await authApi.google({
         idToken,
         deviceId: Device.osInternalBuildId ?? Device.modelId ?? undefined,
@@ -151,7 +159,10 @@ export const loginWithGoogle = createAsyncThunk<User, { idToken: string }, { rej
       await saveTokens(result.accessToken, result.refreshToken);
       return result.user;
     } catch (error) {
-      return rejectWithValue(messageFor(error));
+      // Signed in on the device but refused by the API: forget the Google
+      // account too, so the next attempt shows the picker again.
+      await signOutGoogle();
+      return rejectWithValue(googleErrorMessage(error));
     }
   },
 );
@@ -205,6 +216,8 @@ export const signOut = createAsyncThunk('auth/signOut', async () => {
     await authApi.logout(refreshToken).catch(() => undefined);
   }
   await clearTokens();
+  // So the account picker appears again next time; never blocks sign-out.
+  await signOutGoogle();
 });
 
 export const applyForWholesale = createAsyncThunk<
@@ -306,6 +319,21 @@ const authSlice = createSlice({
           state.error = null;
       })
 
+      // Google has its own spinner on its own button, so it leaves the shared
+      // `loading` flag (which drives the email button) alone.
+      .addCase(loginWithGoogle.pending, (state) => {
+        state.error = null;
+      })
+      .addCase(loginWithGoogle.fulfilled, (state, action) => {
+        if (!action.payload) return;
+        state.user = action.payload;
+        state.status = 'signedIn';
+        state.pendingApplication = null;
+      })
+      .addCase(loginWithGoogle.rejected, (state, action) => {
+        state.error = action.payload ?? "Couldn't sign you in with Google. Please try again.";
+      })
+
       .addCase(applyForWholesale.fulfilled, (state, action) => {
         state.user = action.payload;
       })
@@ -330,10 +358,10 @@ const authSlice = createSlice({
         if (state.user) state.user.addresses = action.payload;
       })
 
-      // Password and Google sign-in all land in the same signed-in state as
-      // OTP, so the navigator does not need to know which route was taken.
+      // Registering and signing in land in the same signed-in state, so the
+      // navigator does not need to know which of the two got the user there.
       .addMatcher(
-        isAnyOf(registerWithPassword.pending, loginWithPassword.pending, loginWithGoogle.pending),
+        isAnyOf(registerWithPassword.pending, loginWithPassword.pending),
         (state) => {
           state.loading = true;
           state.error = null;
@@ -343,7 +371,6 @@ const authSlice = createSlice({
         isAnyOf(
           registerWithPassword.fulfilled,
           loginWithPassword.fulfilled,
-          loginWithGoogle.fulfilled,
         ),
         (state, action) => {
           state.loading = false;
@@ -356,7 +383,6 @@ const authSlice = createSlice({
         isAnyOf(
           registerWithPassword.rejected,
           loginWithPassword.rejected,
-          loginWithGoogle.rejected,
         ),
         (state, action) => {
           state.loading = false;
