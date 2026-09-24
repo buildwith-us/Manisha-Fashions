@@ -1,16 +1,37 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
+  Modal,
+  Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
-import { ErrorBanner, FieldRow, Group, KeyboardAwareScrollView, Row, Screen, Segmented, Toggle } from '../../components/ui';
+import {
+  EmptyState,
+  ErrorBanner,
+  FieldRow,
+  Group,
+  KeyboardAwareScrollView,
+  Row,
+  Screen,
+  Segmented,
+  SelectRow,
+  Toggle,
+} from '../../components/ui';
+import { Icon } from '../../components/Icon';
 import { PressableScale } from '../../components/motion';
+import {
+  INDIAN_STATES,
+  canonicalStateName,
+  compactStateKey,
+  type IndianState,
+} from '../../constants/indianStates';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { saveAddress } from '../../store/slices/authSlice';
-import { colors, spacing, typography } from '../../theme';
+import { colors, radius, spacing, typography } from '../../theme';
 import type { RootStackParamList } from '../../navigation/types';
 
 type Route = RouteProp<RootStackParamList, 'AddressForm'>;
@@ -40,7 +61,17 @@ export function AddressFormScreen() {
   const [line1, setLine1] = useState(existing?.line1 ?? '');
   const [line2, setLine2] = useState(existing?.line2 ?? '');
   const [city, setCity] = useState(existing?.city ?? '');
-  const [state, setState] = useState(existing?.state ?? '');
+  /*
+     Always one of INDIAN_STATES, picked from a list rather than typed, so the
+     address carries the exact spelling COD rules are set against. An older
+     address typed as "Tamilnadu" or "TN" opens with Tamil Nadu selected; one
+     that matches no state opens unselected, showing what was saved.
+  */
+  const [state, setState] = useState<IndianState | null>(() =>
+    canonicalStateName(existing?.state),
+  );
+  const unmatchedSavedState = existing && !canonicalStateName(existing.state) ? existing.state : null;
+  const [pickingState, setPickingState] = useState(false);
   const [pincode, setPincode] = useState(existing?.pincode ?? '');
   const [isDefault, setIsDefault] = useState(existing?.isDefault ?? false);
 
@@ -54,7 +85,7 @@ export function AddressFormScreen() {
     phone: !/^[6-9]\d{9}$/.test(phone.replace(/\D/g, '')) ? 'Enter a valid 10-digit number' : null,
     line1: line1.trim().length < 4 ? 'Enter the street address' : null,
     city: city.trim().length < 2 ? 'Enter the city' : null,
-    state: state.trim().length < 2 ? 'Enter the state' : null,
+    state: !state ? 'Choose the state' : null,
     pincode: !/^[1-9][0-9]{5}$/.test(pincode) ? 'Enter a valid 6-digit PIN code' : null,
   };
   const firstError = Object.values(errors).find((value) => value !== null) ?? null;
@@ -76,7 +107,8 @@ export function AddressFormScreen() {
           line1: line1.trim(),
           line2: line2.trim() || undefined,
           city: city.trim(),
-          state: state.trim(),
+          // Non-null: validation above blocks the save without a state.
+          state: state as IndianState,
           pincode,
           isDefault,
         },
@@ -203,19 +235,19 @@ export function AddressFormScreen() {
               </View>
             </View>
 
-            <FieldRow label="State" {...field('state')}>
-              <TextInput
-                value={state}
-                onChangeText={setState}
-                onFocus={() => setFocused('state')}
-                onBlur={() => setFocused(null)}
-                placeholder="Gujarat"
-                placeholderTextColor={colors.textDisabled}
-                autoCapitalize="words"
-                style={styles.input}
-              />
-            </FieldRow>
+            <SelectRow
+              label="State"
+              value={state ?? undefined}
+              placeholder="Choose your state"
+              onPress={() => setPickingState(true)}
+            />
           </Group>
+
+          {unmatchedSavedState && !state ? (
+            <Text style={styles.stateHint}>
+              Saved as "{unmatchedSavedState}". Choose your state from the list to update it.
+            </Text>
+          ) : null}
 
           {touched && firstError ? <Text style={styles.formError}>{firstError}</Text> : null}
 
@@ -228,7 +260,113 @@ export function AddressFormScreen() {
             </Group>
           </View>
       </KeyboardAwareScrollView>
+
+      <StatePicker
+        visible={pickingState}
+        selected={state}
+        onSelect={(next) => {
+          setState(next);
+          setPickingState(false);
+        }}
+        onClose={() => setPickingState(false)}
+      />
     </Screen>
+  );
+}
+
+/**
+ * The same sheet as the product form's category picker, with a search field:
+ * 36 names is too many to scroll for. The search also understands the ways a
+ * state is commonly typed — "Tamilnadu", "TN", "Orissa" all find their state.
+ */
+function StatePicker({
+  visible,
+  selected,
+  onSelect,
+  onClose,
+}: {
+  visible: boolean;
+  selected: IndianState | null;
+  onSelect: (state: IndianState) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+
+  const matches = useMemo(() => {
+    const typed = query.trim();
+    if (!typed) return INDIAN_STATES;
+    const compact = compactStateKey(typed);
+    const alias = canonicalStateName(typed);
+    return INDIAN_STATES.filter(
+      (name) => name === alias || compactStateKey(name).includes(compact),
+    );
+  }, [query]);
+
+  const close = () => {
+    setQuery('');
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
+      {/* Plain Pressable: the scrim is a dismiss target, not a control. */}
+      <Pressable style={styles.scrim} onPress={close} />
+      <View style={styles.sheet}>
+        <View style={styles.grabberRow}>
+          <View style={styles.grabber} />
+        </View>
+        <View style={styles.sheetTitleRow}>
+          <Text style={styles.sheetTitle}>State</Text>
+          <PressableScale onPress={close} hitSlop={10} style={styles.sheetClose}>
+            <Icon name="close" size={15} color={colors.textMuted} strokeWidth={2.2} />
+          </PressableScale>
+        </View>
+
+        <View style={styles.searchField}>
+          <Icon name="search" size={17} color={colors.textPlaceholder} />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search states"
+            placeholderTextColor={colors.textPlaceholder}
+            autoCorrect={false}
+            autoCapitalize="none"
+            returnKeyType="search"
+            accessibilityLabel="Search states"
+            style={styles.searchInput}
+          />
+        </View>
+
+        <ScrollView
+          contentContainerStyle={styles.sheetScroll}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {matches.length === 0 ? (
+            <EmptyState icon="info" title="No state matches" message="Check the spelling." />
+          ) : (
+            <Group>
+              {matches.map((name) => (
+                <Row
+                  key={name}
+                  label={name}
+                  tone={selected === name ? 'default' : 'muted'}
+                  onPress={() => {
+                    setQuery('');
+                    onSelect(name);
+                  }}
+                  right={
+                    selected === name ? (
+                      <Icon name="check" size={18} color={colors.primary} strokeWidth={2.4} />
+                    ) : null
+                  }
+                />
+              ))}
+            </Group>
+          )}
+        </ScrollView>
+      </View>
+    </Modal>
   );
 }
 
@@ -248,4 +386,45 @@ const styles = StyleSheet.create({
   splitRow: { flexDirection: 'row' },
   splitLeft: { width: 130, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: colors.border },
   formError: { ...typography.footnote, color: colors.primary, marginTop: spacing.md },
+  stateHint: { ...typography.footnote, color: colors.textFaint, marginTop: spacing.md },
+
+  // State picker — the product form's category sheet, plus a search field.
+  scrim: { flex: 1, backgroundColor: colors.scrim },
+  sheet: {
+    maxHeight: '80%',
+    backgroundColor: colors.background,
+    borderTopLeftRadius: radius.sheet,
+    borderTopRightRadius: radius.sheet,
+  },
+  grabberRow: { alignItems: 'center', paddingTop: spacing.md + 2, paddingBottom: spacing.sm },
+  grabber: { width: 38, height: 5, borderRadius: radius.pill, backgroundColor: colors.borderStrong },
+  sheetTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.lg,
+  },
+  sheetTitle: { ...typography.title, fontSize: 24, color: colors.text },
+  sheetClose: {
+    width: 30,
+    height: 30,
+    borderRadius: radius.pill,
+    backgroundColor: colors.fill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm + 2,
+    backgroundColor: colors.fill,
+    borderRadius: 12,
+    paddingHorizontal: spacing.md + 2,
+    marginHorizontal: spacing.xl,
+    marginBottom: spacing.lg,
+  },
+  searchInput: { flex: 1, paddingVertical: spacing.md, fontSize: 16, color: colors.text },
+  sheetScroll: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl },
 });
