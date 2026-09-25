@@ -51,6 +51,8 @@ export interface User {
   authProviders: AuthProvider[];
   name?: string;
   email?: string;
+  /** Whether the account has proved it owns `email` (emailed code, Google, or a reset). */
+  emailVerified?: boolean;
   /** Profile photo; set from Google on accounts that signed in with it. */
   avatar?: string;
   accountType: AccountType;

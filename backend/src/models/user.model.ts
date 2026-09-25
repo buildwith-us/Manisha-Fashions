@@ -34,6 +34,18 @@ export interface IUser extends Document<Types.ObjectId> {
   /** Profile photo URL; only Google supplies one today. */
   avatar?: string;
   /**
+   * True once the account has proved it controls `email`: a Google sign-in
+   * with email_verified, a completed password reset, or the emailed code of
+   * the verify/change-email flow. Registration alone does not set it. The
+   * ADMIN_EMAILS whitelist grants admin only to verified addresses.
+   */
+  emailVerified: boolean;
+  /** An address awaiting its emailed code (verify or change-email flow). */
+  pendingEmail?: string;
+  /** bcrypt hash of that code; like every other secret here, select: false. */
+  emailCodeHash?: string;
+  emailCodeExpiresAt?: Date;
+  /**
    * bcrypt hash. Absent on accounts created by Google sign-in (and by
    * `make-admin`) until a password is set through the reset flow.
    * `select: false`, so it never rides along on an ordinary read.; `select: false`, so it never rides along on an ordinary read. */
@@ -101,6 +113,10 @@ const userSchema = new Schema<IUser>(
     // Unique now that it is a login credential and the key Google links on.
     email: { type: String, trim: true, lowercase: true, maxlength: 160, unique: true, sparse: true },
     avatar: { type: String, trim: true, maxlength: 500 },
+    emailVerified: { type: Boolean, default: false },
+    pendingEmail: { type: String, trim: true, lowercase: true, maxlength: 160, select: false },
+    emailCodeHash: { type: String, select: false },
+    emailCodeExpiresAt: { type: Date, select: false },
     passwordHash: { type: String, select: false },
     googleId: { type: String, unique: true, sparse: true },
     authProviders: {

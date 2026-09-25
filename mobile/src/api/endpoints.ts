@@ -100,7 +100,22 @@ export const authApi = {
 
   me: () => get<User>('/auth/me'),
 
-  updateProfile: (input: { name?: string; email?: string }) => patch<User>('/auth/me', input),
+  /** Name only — the email changes through requestEmailCode → confirmEmailCode. */
+  updateProfile: (input: { name?: string }) => patch<User>('/auth/me', input),
+
+  /**
+   * Emails a 6-digit code to `email`: the current address to verify it, or a
+   * new one to change to it. Nothing changes until confirmEmailCode.
+   */
+  requestEmailCode: (email: string) =>
+    post<{ email: string; purpose: 'verify' | 'change'; expiresInMinutes: number }>(
+      '/auth/email/request-code',
+      { email },
+    ),
+
+  /** Applies the verified email and returns a fresh session (others are revoked on a change). */
+  confirmEmailCode: (input: { otp: string; deviceId?: string }) =>
+    post<AuthResult & { changed: boolean }>('/auth/email/confirm', input),
 
   applyForWholesale: (input: { businessName?: string; gstNumber?: string; shopProofUrl?: string }) =>
     post<User>('/auth/wholesale/apply', input),

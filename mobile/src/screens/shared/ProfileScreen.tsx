@@ -1,37 +1,89 @@
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Button, Group, Input, KeyboardAwareScrollView, NavBar, Row, Screen, SectionLabel } from '../../components/ui';
+import {
+  Button,
+  ErrorBanner,
+  Group,
+  Input,
+  KeyboardAwareScrollView,
+  NavBar,
+  Row,
+  Screen,
+  SectionLabel,
+} from '../../components/ui';
+import { authApi } from '../../api/endpoints';
+import { ApiError } from '../../api/client';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { updateProfile } from '../../store/slices/authSlice';
+import { confirmEmailCode, updateProfile } from '../../store/slices/authSlice';
 import { colors, spacing, typography, wholesaleStatusStyle } from '../../theme';
 
-/** The account facts that cannot be edited, then the two that can. */
+type EmailStep =
+  | { step: 'idle' }
+  | { step: 'enter' }
+  | { step: 'code'; target: string; purpose: 'verify' | 'change' };
+
+/**
+ * The account facts that cannot be edited, the name, and the email.
+ *
+ * The email is a sign-in credential, so it is never typed straight in: a new
+ * address (or the current one, to verify it) gets a 6-digit code, and only
+ * that code applies it.
+ */
 export function ProfileScreen() {
   const navigation = useNavigation();
   const dispatch = useAppDispatch();
   const user = useAppSelector((state) => state.auth.user);
 
   const [name, setName] = useState(user?.name ?? '');
-  const [email, setEmail] = useState(user?.email ?? '');
   const [saving, setSaving] = useState(false);
-  const [touched, setTouched] = useState(false);
 
-  const emailInvalid = email.trim().length > 0 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const [emailFlow, setEmailFlow] = useState<EmailStep>({ step: 'idle' });
+  const [newEmail, setNewEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailNotice, setEmailNotice] = useState<string | null>(null);
 
   const handleSave = async () => {
-    setTouched(true);
-    if (emailInvalid) return;
-
     setSaving(true);
-    await dispatch(
-      updateProfile({
-        name: name.trim() || undefined,
-        email: email.trim() || undefined,
-      }),
-    );
+    await dispatch(updateProfile({ name: name.trim() || undefined }));
     setSaving(false);
     navigation.goBack();
+  };
+
+  const sendCode = async (target: string) => {
+    setEmailError(null);
+    setEmailNotice(null);
+    setEmailBusy(true);
+    try {
+      const result = await authApi.requestEmailCode(target);
+      setCode('');
+      setEmailFlow({ step: 'code', target: result.email, purpose: result.purpose });
+    } catch (caught) {
+      setEmailError(caught instanceof ApiError ? caught.message : 'Could not send the code.');
+    } finally {
+      setEmailBusy(false);
+    }
+  };
+
+  const confirm = async () => {
+    setEmailError(null);
+    setEmailBusy(true);
+    const result = await dispatch(confirmEmailCode({ otp: code.trim() }));
+    setEmailBusy(false);
+    if (confirmEmailCode.fulfilled.match(result)) {
+      setEmailNotice(
+        emailFlow.step === 'code' && emailFlow.purpose === 'change'
+          ? 'Email changed. Other devices have been signed out.'
+          : 'Email verified.',
+      );
+      setEmailFlow({ step: 'idle' });
+      setNewEmail('');
+      setCode('');
+    } else {
+      setEmailError(result.payload ?? 'That code did not work.');
+    }
   };
 
   if (!user) return <Screen />;
@@ -46,6 +98,8 @@ export function ProfileScreen() {
           ? `Wholesale · ${status.label}`
           : 'Retail';
 
+  const newEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail.trim());
+
   return (
     <Screen edges={['top']}>
       <NavBar title="Profile" onBack={() => navigation.goBack()} />
@@ -57,16 +111,94 @@ export function ProfileScreen() {
       >
         <SectionLabel>Account</SectionLabel>
         <Group>
-          <Row label="Mobile number" value={user.phone} />
+          {user.phone ? <Row label="Mobile number" value={user.phone} /> : null}
           <Row label="Account type" value={accountLabel} />
           {user.business?.businessName ? (
             <Row label="Business" value={user.business.businessName} />
           ) : null}
           {user.business?.gstNumber ? <Row label="GSTIN" value={user.business.gstNumber} /> : null}
         </Group>
-        <Text style={styles.hint}>
-          Your mobile number is your login and cannot be changed here.
-        </Text>
+
+        <View style={styles.block}>
+          <SectionLabel>Email</SectionLabel>
+          <Group>
+            <Row
+              label={user.email ?? 'No email on this account'}
+              detail={user.emailVerified ? 'Verified' : 'Not verified'}
+            />
+          </Group>
+
+          {emailNotice ? <Text style={[styles.hint, styles.success]}>{emailNotice}</Text> : null}
+          {emailError ? <ErrorBanner message={emailError} /> : null}
+
+          {emailFlow.step === 'idle' ? (
+            <View style={styles.emailActions}>
+              {user.email && !user.emailVerified ? (
+                <Button
+                  label="Verify email"
+                  variant="secondary"
+                  onPress={() => void sendCode(user.email as string)}
+                  loading={emailBusy}
+                />
+              ) : null}
+              <Button
+                label="Change email"
+                variant="ghost"
+                onPress={() => {
+                  setEmailError(null);
+                  setEmailNotice(null);
+                  setEmailFlow({ step: 'enter' });
+                }}
+              />
+            </View>
+          ) : null}
+
+          {emailFlow.step === 'enter' ? (
+            <Group padded>
+              <Input
+                label="New email"
+                value={newEmail}
+                onChangeText={setNewEmail}
+                placeholder="you@example.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoComplete="email"
+                hint="We'll send a 6-digit code to this address. Your email changes only after you enter it."
+              />
+              <Button
+                label="Send code"
+                onPress={() => void sendCode(newEmail.trim().toLowerCase())}
+                loading={emailBusy}
+                disabled={!newEmailValid}
+              />
+              <Button label="Cancel" variant="ghost" onPress={() => setEmailFlow({ step: 'idle' })} />
+            </Group>
+          ) : null}
+
+          {emailFlow.step === 'code' ? (
+            <Group padded>
+              <Input
+                label={`Code sent to ${emailFlow.target}`}
+                value={code}
+                onChangeText={(value) => setCode(value.replace(/\D/g, '').slice(0, 6))}
+                placeholder="6-digit code"
+                keyboardType="number-pad"
+                maxLength={6}
+              />
+              <Button
+                label={emailFlow.purpose === 'change' ? 'Change email' : 'Verify email'}
+                onPress={() => void confirm()}
+                loading={emailBusy}
+                disabled={code.length !== 6}
+              />
+              <Button
+                label="Send a new code"
+                variant="ghost"
+                onPress={() => void sendCode(emailFlow.target)}
+              />
+            </Group>
+          ) : null}
+        </View>
 
         <View style={styles.block}>
           <SectionLabel>Your details</SectionLabel>
@@ -77,16 +209,6 @@ export function ProfileScreen() {
               onChangeText={setName}
               placeholder="How should we address you?"
               autoCapitalize="words"
-            />
-            <Input
-              label="Email"
-              value={email}
-              onChangeText={setEmail}
-              placeholder="you@example.com"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              error={touched && emailInvalid ? 'Enter a valid email address' : null}
-              hint="Optional — used for order receipts only."
             />
             <Button label="Save changes" onPress={handleSave} loading={saving} />
           </Group>
@@ -99,6 +221,7 @@ export function ProfileScreen() {
 const styles = StyleSheet.create({
   scroll: { paddingHorizontal: spacing.xl, paddingTop: spacing.md, paddingBottom: spacing.xxxl },
   block: { marginTop: spacing.xl },
+  emailActions: { marginTop: spacing.md, gap: spacing.sm },
   hint: {
     ...typography.footnote,
     color: colors.textFaint,
@@ -106,4 +229,5 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     paddingHorizontal: spacing.xs,
   },
+  success: { color: colors.success },
 });

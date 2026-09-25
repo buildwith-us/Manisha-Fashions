@@ -9,6 +9,8 @@ export interface SerializedUser {
   authProviders: IUser['authProviders'];
   name?: string;
   email?: string;
+  /** Whether the account has proved it owns `email`. */
+  emailVerified: boolean;
   avatar?: string;
   accountType: IUser['accountType'];
   wholesaleStatus: IUser['wholesaleStatus'];
@@ -66,6 +68,7 @@ export function serializeUser(user: IUser): SerializedUser {
     authProviders: user.authProviders ?? [],
     name: user.name,
     email: user.email,
+    emailVerified: user.emailVerified === true,
     avatar: user.avatar,
     accountType: user.accountType,
     wholesaleStatus: user.wholesaleStatus,

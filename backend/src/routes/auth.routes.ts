@@ -8,12 +8,14 @@ import {
   addressSchema,
   addressUpdateSchema,
   applyWholesaleSchema,
+  confirmEmailCodeSchema,
   forgotPasswordSchema,
   googleLoginSchema,
   logoutSchema,
   passwordLoginSchema,
   refreshSchema,
   registerSchema,
+  requestEmailCodeSchema,
   resetPasswordSchema,
   verifyResetOtpSchema,
   updateProfileSchema,
@@ -63,6 +65,22 @@ router.post(
 // ── Authenticated ──
 router.get('/me', authenticate, authController.me);
 router.patch('/me', validate({ body: updateProfileSchema }), authenticate, authController.updateProfile);
+
+// ── Verify or change the account email (emailed 6-digit code) ──
+router.post(
+  '/email/request-code',
+  validate({ body: requestEmailCodeSchema }),
+  authLimiter,
+  authenticate,
+  authController.requestEmailCode,
+);
+router.post(
+  '/email/confirm',
+  validate({ body: confirmEmailCodeSchema }),
+  authLimiter,
+  authenticate,
+  authController.confirmEmailCode,
+);
 router.post(
   '/wholesale/apply',
   validate({ body: applyWholesaleSchema }),

@@ -43,17 +43,63 @@ export interface SendResult {
   error?: string;
 }
 
+type CodePurpose = 'reset' | 'verify' | 'change';
+
+const COPY: Record<CodePurpose, { subject: string; heading: string; lead: string; ignore: string; log: string }> = {
+  reset: {
+    subject: `Reset your ${BRAND} password`,
+    heading: 'Password reset',
+    lead: 'Enter this code in the app to choose a new password.',
+    ignore: "If you didn't ask for this, you can ignore this email — your password stays as it is.",
+    log: 'password reset code',
+  },
+  verify: {
+    subject: `Verify your ${BRAND} email`,
+    heading: 'Verify your email',
+    lead: 'Enter this code in the app to verify this email address.',
+    ignore: "If you didn't ask for this, you can ignore this email.",
+    log: 'email verification code',
+  },
+  change: {
+    subject: `Confirm your new ${BRAND} email`,
+    heading: 'Confirm your new email',
+    lead: 'Enter this code in the app to make this your account email.',
+    ignore: "If you didn't ask for this, you can ignore this email — no account will be changed.",
+    log: 'email change code',
+  },
+};
+
 export async function sendPasswordResetEmail(input: {
   to: string;
   code: string;
   expiresInMinutes: number;
 }): Promise<SendResult> {
-  const { to, code, expiresInMinutes } = input;
-  const subject = `Reset your ${BRAND} password`;
+  return sendCodeEmail({ ...input, purpose: 'reset' });
+}
+
+/** The verify/change-email code, sent to the address being proven. */
+export async function sendEmailVerificationCode(input: {
+  to: string;
+  code: string;
+  expiresInMinutes: number;
+  purpose: 'verify' | 'change';
+}): Promise<SendResult> {
+  return sendCodeEmail(input);
+}
+
+async function sendCodeEmail(input: {
+  to: string;
+  code: string;
+  expiresInMinutes: number;
+  purpose: CodePurpose;
+}): Promise<SendResult> {
+  const { to, code, expiresInMinutes, purpose } = input;
+  const copy = COPY[purpose];
+  const subject = copy.subject;
 
   if (!transporter) {
     // Dev-only escape hatch: visible to the developer, never to a user.
-    logger.warn(`[email:dev] password reset code for ${to} → ${code}`);
+    logger.warn(`[email:dev] ${copy.log} for ${to} → ${code}`);
     return { delivered: false };
   }
 
@@ -64,25 +110,25 @@ export async function sendPasswordResetEmail(input: {
       from: `${BRAND} <${env.SMTP_USER}>`,
       to,
       subject,
-      text: plainTextBody(code, expiresInMinutes),
-      html: htmlBody(code, expiresInMinutes),
+      text: plainTextBody(copy, code, expiresInMinutes),
+      html: htmlBody(copy, code, expiresInMinutes),
     });
     return { delivered: true };
   } catch (error) {
     // Never surfaced to the caller: the endpoint returns the same generic
     // response either way, so a send failure cannot be used to probe for
     // registered addresses.
-    logger.error('Password reset email failed to send', error);
+    logger.error(`Email (${purpose}) failed to send`, error);
     if (!isProduction) logger.warn(`[email:fallback] ${to} → ${code}`);
     return { delivered: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
-function plainTextBody(code: string, minutes: number): string {
+function plainTextBody(copy: (typeof COPY)[CodePurpose], code: string, minutes: number): string {
   return [
     `${BRAND}`,
     '',
-    'We received a request to reset your password.',
+    copy.lead,
     '',
     'Your verification code is:',
     '',
@@ -90,11 +136,11 @@ function plainTextBody(code: string, minutes: number): string {
     '',
     `This code expires in ${minutes} minutes and can only be used once.`,
     '',
-    "If you didn't ask for this, you can ignore this email — your password stays as it is.",
+    copy.ignore,
   ].join('\n');
 }
 
-function htmlBody(code: string, minutes: number): string {
+function htmlBody(copy: (typeof COPY)[CodePurpose], code: string, minutes: number): string {
   // The code is spaced out and set in a monospace face so it survives being
   // read off one screen and typed into another.
   return `<!doctype html>
@@ -103,13 +149,13 @@ function htmlBody(code: string, minutes: number): string {
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto;background:#FFFFFF;border-radius:14px;padding:32px;">
       <tr><td>
         <h1 style="margin:0 0 4px;font-size:20px;letter-spacing:0.02em;color:${ACCENT};">${BRAND}</h1>
-        <p style="margin:0 0 24px;font-size:13px;color:#8A8A8A;">Password reset</p>
-        <p style="margin:0 0 20px;font-size:15px;line-height:1.5;">Enter this code in the app to choose a new password.</p>
+        <p style="margin:0 0 24px;font-size:13px;color:#8A8A8A;">${copy.heading}</p>
+        <p style="margin:0 0 20px;font-size:15px;line-height:1.5;">${copy.lead}</p>
         <div style="margin:0 0 24px;padding:20px;background:#FBF7F4;border-radius:12px;text-align:center;">
           <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:34px;font-weight:700;letter-spacing:10px;color:${ACCENT};">${code}</span>
         </div>
         <p style="margin:0 0 8px;font-size:13px;color:#6B6B6B;">This code expires in ${minutes} minutes and can only be used once.</p>
-        <p style="margin:0;font-size:13px;color:#6B6B6B;">If you didn't ask for this, you can ignore this email — your password stays as it is.</p>
+        <p style="margin:0;font-size:13px;color:#6B6B6B;">${copy.ignore}</p>
       </td></tr>
     </table>
   </body>

@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Provider } from 'react-redux';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { ConnectionBanner } from './src/components/ConnectionBanner';
 import { store } from './src/store';
 import { bootstrapSession } from './src/store/slices/authSlice';
 import { configureGoogle } from './src/services/googleAuth';
@@ -25,6 +26,8 @@ export default function App() {
       <SafeAreaProvider>
         <StatusBar style="dark" />
         <AppBootstrap />
+        {/* Over every screen: shown only while the API is waking or unreachable. */}
+        <ConnectionBanner />
       </SafeAreaProvider>
     </Provider>
   );

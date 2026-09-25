@@ -232,9 +232,30 @@ export const applyForWholesale = createAsyncThunk<
   }
 });
 
-export const updateProfile = createAsyncThunk<User, { name?: string; email?: string }>(
+export const updateProfile = createAsyncThunk<User, { name?: string }>(
   'auth/updateProfile',
   async (input) => authApi.updateProfile(input),
+);
+
+/**
+ * Step 2 of verify/change email. A change revokes every other session, so the
+ * response carries a fresh token pair for this device — stored here the same
+ * way a sign-in stores it.
+ */
+export const confirmEmailCode = createAsyncThunk<User, { otp: string }, { rejectValue: string }>(
+  'auth/confirmEmailCode',
+  async ({ otp }, { rejectWithValue }) => {
+    try {
+      const result = await authApi.confirmEmailCode({
+        otp,
+        deviceId: Device.osInternalBuildId ?? Device.modelId ?? undefined,
+      });
+      await saveTokens(result.accessToken, result.refreshToken);
+      return result.user;
+    } catch (error) {
+      return rejectWithValue(messageFor(error));
+    }
+  },
 );
 
 /* ── Addresses (PRD 4.3) ────────────────────────────────────────────────── */
@@ -342,6 +363,9 @@ const authSlice = createSlice({
       })
 
       .addCase(updateProfile.fulfilled, (state, action) => {
+        state.user = action.payload;
+      })
+      .addCase(confirmEmailCode.fulfilled, (state, action) => {
         state.user = action.payload;
       })
 

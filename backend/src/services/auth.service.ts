@@ -13,6 +13,11 @@ import * as tokenService from './token.service';
  * rather than written once at signup, so editing the list takes effect on the
  * next login instead of needing a database edit.
  *
+ * Only to a VERIFIED address. Holding a whitelisted address in the email field
+ * is not proof of owning it — an account used to be able to type one in via
+ * PATCH /auth/me and become admin on the next login. Verification comes from a
+ * Google sign-in, a completed password reset, or the emailed-code flow.
+ *
  * It demotes as well as promotes: an account removed from the list loses admin
  * the next time it signs in. `staff` is left alone — this list governs the
  * admin role specifically, not every elevated role.
@@ -28,7 +33,7 @@ function isAdminEmail(email?: string): boolean {
  * Silent no-op for staff, and for anyone whose role already matches the list.
  */
 function syncAdminRole(user: IUser): boolean {
-  const shouldBeAdmin = isAdminEmail(user.email);
+  const shouldBeAdmin = user.emailVerified === true && isAdminEmail(user.email);
 
   if (shouldBeAdmin && user.accountType !== 'admin') {
     user.accountType = 'admin';
@@ -92,13 +97,158 @@ export async function getProfile(userId: string): Promise<SerializedUser> {
   return serializeUser(user);
 }
 
+/**
+ * Name only. The email is a login credential and the key ADMIN_EMAILS matches
+ * on, so it changes solely through requestEmailCode → confirmEmailCode.
+ */
 export async function updateProfile(
   userId: string,
-  updates: { name?: string; email?: string },
+  updates: { name?: string },
 ): Promise<SerializedUser> {
-  const user = await User.findByIdAndUpdate(userId, { $set: updates }, { new: true });
+  const $set = updates.name !== undefined ? { name: updates.name } : {};
+  const user = await User.findByIdAndUpdate(userId, { $set }, { new: true });
   if (!user) throw ApiError.notFound('Account not found');
   return serializeUser(user);
+}
+
+/* ── Verify or change the account email ─────────────────────────────────── */
+
+const EMAIL_CODE_QUOTA_KEY = (userId: string) => `emailcode:quota:${userId}`;
+const EMAIL_CODE_ATTEMPT_KEY = (userId: string) => `emailcode:attempts:${userId}`;
+const EMAIL_CODE_LOCK_KEY = (userId: string) => `emailcode:lock:${userId}`;
+
+/**
+ * Step 1 — email a 6-digit code to `email`.
+ *
+ * The same flow serves two purposes: sending it to the account's CURRENT
+ * address verifies that address; sending it to a NEW one changes the email
+ * once the code comes back. Nothing about the account changes until then.
+ */
+export async function requestEmailCode(
+  userId: string,
+  email: string,
+): Promise<{ email: string; purpose: 'verify' | 'change'; expiresInMinutes: number }> {
+  const target = email.trim().toLowerCase();
+  const user = await User.findById(userId);
+  if (!user) throw ApiError.notFound('Account not found');
+
+  const purpose = target === user.email ? 'verify' : 'change';
+  if (purpose === 'verify' && user.emailVerified) {
+    throw ApiError.conflict('Your email address is already verified.');
+  }
+  if (purpose === 'change') {
+    // Case-insensitive by construction: every stored email is lowercased.
+    const taken = await User.exists({ email: target, _id: { $ne: user._id } });
+    if (taken) throw ApiError.conflict('That email address is already in use.');
+  }
+
+  const store = getStore();
+  const sent = await store.incr(EMAIL_CODE_QUOTA_KEY(userId));
+  if (sent === 1) await store.expire(EMAIL_CODE_QUOTA_KEY(userId), 3600);
+  if (sent > env.FORGOT_PASSWORD_MAX_PER_HOUR) {
+    throw ApiError.tooManyRequests(
+      `You can request at most ${env.FORGOT_PASSWORD_MAX_PER_HOUR} codes per hour. Please try again later.`,
+    );
+  }
+
+  const otp = await passwordService.createResetOtp();
+  await User.updateOne(
+    { _id: user._id },
+    { $set: { pendingEmail: target, emailCodeHash: otp.codeHash, emailCodeExpiresAt: otp.expiresAt } },
+  );
+  // A fresh code starts a fresh set of attempts.
+  await store.del(EMAIL_CODE_ATTEMPT_KEY(userId));
+
+  await emailService.sendEmailVerificationCode({
+    to: target,
+    code: otp.code,
+    expiresInMinutes: env.PASSWORD_RESET_OTP_TTL_MINUTES,
+    purpose,
+  });
+
+  return { email: target, purpose, expiresInMinutes: env.PASSWORD_RESET_OTP_TTL_MINUTES };
+}
+
+/**
+ * Step 2 — check the code and apply it.
+ *
+ * On a change, the address is re-checked for a clash (it may have been taken
+ * since step 1), and every other session is revoked: whoever held the old
+ * address should not stay signed in on the strength of it. This device gets a
+ * fresh token pair in the response, so it stays signed in.
+ */
+export async function confirmEmailCode(input: {
+  userId: string;
+  otp: string;
+  context?: LoginContext;
+}): Promise<AuthResult & { changed: boolean }> {
+  const { userId, otp, context = {} } = input;
+  const store = getStore();
+
+  if (await store.get(EMAIL_CODE_LOCK_KEY(userId))) {
+    const remaining = await store.ttl(EMAIL_CODE_LOCK_KEY(userId));
+    throw ApiError.tooManyRequests(
+      `Too many incorrect codes. Try again in ${Math.max(1, Math.ceil(remaining / 60))} minute(s).`,
+    );
+  }
+
+  const user = await User.findById(userId).select('+pendingEmail +emailCodeHash +emailCodeExpiresAt');
+  if (!user) throw ApiError.notFound('Account not found');
+
+  if (
+    !user.pendingEmail ||
+    !user.emailCodeHash ||
+    !user.emailCodeExpiresAt ||
+    user.emailCodeExpiresAt.getTime() <= Date.now()
+  ) {
+    // 400, not 401: the caller IS signed in; only the code is wrong. A 401 here
+    // would read as a dead session and sign the app out.
+    throw new ApiError(400, 'This code has expired. Please request a new one.', 'EMAIL_CODE_EXPIRED');
+  }
+
+  if (!(await passwordService.verifyResetOtp(otp, user.emailCodeHash))) {
+    const attempts = await store.incr(EMAIL_CODE_ATTEMPT_KEY(userId));
+    if (attempts === 1) {
+      await store.expire(EMAIL_CODE_ATTEMPT_KEY(userId), env.PASSWORD_RESET_OTP_TTL_MINUTES * 60);
+    }
+    if (attempts >= env.PASSWORD_RESET_MAX_ATTEMPTS) {
+      await store.set(EMAIL_CODE_LOCK_KEY(userId), '1', env.PASSWORD_RESET_LOCKOUT_MINUTES * 60);
+      await store.del(EMAIL_CODE_ATTEMPT_KEY(userId));
+      // Burn the code too, so waiting out the lock does not reopen it.
+      await User.updateOne(
+        { _id: user._id },
+        { $unset: { pendingEmail: 1, emailCodeHash: 1, emailCodeExpiresAt: 1 } },
+      );
+      throw ApiError.tooManyRequests(
+        `Too many incorrect codes. Please request a new code in ${env.PASSWORD_RESET_LOCKOUT_MINUTES} minutes.`,
+      );
+    }
+    const remaining = env.PASSWORD_RESET_MAX_ATTEMPTS - attempts;
+    throw new ApiError(
+      400,
+      `Incorrect code. ${remaining} attempt${remaining === 1 ? '' : 's'} remaining.`,
+      'EMAIL_CODE_INVALID',
+    );
+  }
+
+  const target = user.pendingEmail;
+  const changed = target !== user.email;
+  if (changed && (await User.exists({ email: target, _id: { $ne: user._id } }))) {
+    throw ApiError.conflict('That email address is already in use.');
+  }
+
+  user.email = target;
+  user.emailVerified = true;
+  user.pendingEmail = undefined;
+  user.emailCodeHash = undefined;
+  user.emailCodeExpiresAt = undefined;
+  // A proven address is exactly what the ADMIN_EMAILS rule waits for.
+  syncAdminRole(user);
+  await user.save();
+  await store.del(EMAIL_CODE_ATTEMPT_KEY(userId));
+
+  if (changed) await tokenService.revokeAllSessions(user._id);
+  return { ...(await buildAuthResult(user, context)), changed };
 }
 
 /** Lets an already-signed-in retail customer apply for a wholesale account. */
@@ -249,6 +399,8 @@ export async function loginWithGoogle(input: {
         );
       }
       // Existing password (or OTP) account — attach the Google credential.
+      // Google has verified this exact address (email_verified is required).
+      user.emailVerified = true;
       user.googleId = identity.googleId;
       if (!user.authProviders.includes('google')) user.authProviders.push('google');
       if (!user.name && identity.name) user.name = identity.name;
@@ -263,6 +415,7 @@ export async function loginWithGoogle(input: {
       name: identity.name,
       avatar: identity.picture,
       googleId: identity.googleId,
+      emailVerified: true,
       accountType: 'retail',
       wholesaleStatus: 'none',
       authProviders: ['google'],
@@ -276,6 +429,8 @@ export async function loginWithGoogle(input: {
     throw ApiError.forbidden('This account has been deactivated. Please contact support.');
   }
 
+  // A returning Google user whose address is still the one Google verified.
+  if (user.email === identity.email) user.emailVerified = true;
   syncAdminRole(user);
   user.lastLoginAt = new Date();
   await user.save();
@@ -451,6 +606,8 @@ export async function resetPassword(input: {
   user.passwordResetTokenHash = undefined;
   user.passwordResetTokenExpiresAt = undefined;
   if (!user.authProviders.includes('password')) user.authProviders.push('password');
+  // The code reached this inbox, so the account demonstrably owns the address.
+  user.emailVerified = true;
   await user.save();
 
   await tokenService.revokeAllSessions(user._id);

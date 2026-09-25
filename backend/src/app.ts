@@ -3,6 +3,7 @@ import compression from 'compression';
 import cors from 'cors';
 import express, { type Application } from 'express';
 import helmet from 'helmet';
+import mongoose from 'mongoose';
 import morgan from 'morgan';
 import { env, isProduction } from './config/env';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
@@ -47,6 +48,17 @@ export function createApp(): Application {
       credentials: true,
     }),
   );
+  /**
+   * Render's health check (set the service's Health Check Path to /health).
+   * Outside the API prefix and every limiter, so Render's probes never spend a
+   * customer's rate-limit budget. 503 while MongoDB is not connected, so a
+   * deploy that cannot reach the database is never put in front of traffic.
+   */
+  app.get('/health', (_req, res) => {
+    const connected = mongoose.connection.readyState === 1;
+    res.status(connected ? 200 : 503).json({ status: connected ? 'ok' : 'degraded', database: connected });
+  });
+
   app.use(compression());
   // Request logs would drown the assertions in test output.
   if (env.NODE_ENV !== 'test') app.use(morgan(isProduction ? 'combined' : 'dev'));

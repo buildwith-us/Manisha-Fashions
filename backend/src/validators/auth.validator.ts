@@ -82,9 +82,27 @@ export const resetPasswordSchema = z.object({
   password: passwordField,
 });
 
+/**
+ * Name only. Email is deliberately absent — zod strips it, so an old app build
+ * that still sends it keeps working but cannot change the address. Changing
+ * (or verifying) an email goes through the emailed-code flow below.
+ */
 export const updateProfileSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
-  email: z.string().trim().email().max(160).optional(),
+});
+
+/** Step 1 of verify/change email: the address the code is sent to. */
+export const requestEmailCodeSchema = z.object({
+  email: emailField,
+});
+
+/** Step 2: the 6-digit code from that email. */
+export const confirmEmailCodeSchema = z.object({
+  otp: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, 'Enter the 6-digit code from your email'),
+  deviceId: z.string().max(120).optional(),
 });
 
 export const applyWholesaleSchema = wholesaleApplication;

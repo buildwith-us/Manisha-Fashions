@@ -74,6 +74,20 @@ export const resetPassword = asyncHandler(async (req: Request, res: Response) =>
   res.success({ message: 'Your password has been changed. Please sign in.' });
 });
 
+export const requestEmailCode = asyncHandler(async (req: Request, res: Response) => {
+  res.success(await authService.requestEmailCode(req.user!.id, req.body.email));
+});
+
+export const confirmEmailCode = asyncHandler(async (req: Request, res: Response) => {
+  res.success(
+    await authService.confirmEmailCode({
+      userId: req.user!.id,
+      otp: req.body.otp,
+      context: loginContext(req),
+    }),
+  );
+});
+
 export const me = asyncHandler(async (req: Request, res: Response) => {
   res.success(await authService.getProfile(req.user!.id));
 });
