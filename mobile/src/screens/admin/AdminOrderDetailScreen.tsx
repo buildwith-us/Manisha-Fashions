@@ -43,6 +43,7 @@ export function AdminOrderDetailScreen() {
   const { params } = useRoute<Route>();
   const navigation = useNavigation();
   const canUpdateStatus = usePermission(PERMISSIONS.ORDER_STATUS_UPDATE);
+  const canRefund = usePermission(PERMISSIONS.ORDER_REFUND);
 
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
@@ -76,12 +77,26 @@ export function AdminOrderDetailScreen() {
     }
   };
 
+  const retryRefund = async () => {
+    setUpdating(true);
+    try {
+      setOrder(await adminApi.retryRefund(params.orderId));
+    } catch (caught) {
+      Alert.alert('Could not refund', caught instanceof ApiError ? caught.message : 'Please try again.');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   const handleStatusChange = (next: OrderStatus) => {
     const label = orderStatusStyle[next].label;
+    const paidOnline = order?.paymentMethod === 'razorpay' && order.paymentStatus === 'paid';
     Alert.alert(
       `Mark as ${label}?`,
       next === 'cancelled'
-        ? 'Cancelling returns every item to stock and notifies the customer.'
+        ? paidOnline
+          ? `This order was paid online. Cancelling returns every item to stock and refunds ${formatPaise(order?.totalAmount ?? 0)} to the customer.`
+          : 'Cancelling returns every item to stock and notifies the customer.'
         : 'The customer will be notified of this update.',
       [
         { text: 'Not now', style: 'cancel' },
@@ -117,7 +132,27 @@ export function AdminOrderDetailScreen() {
   const style = orderStatusStyle[order.orderStatus];
   const available = NEXT_STATUS[order.orderStatus];
   const advance = available.find((next) => next !== 'cancelled');
-  const canCancel = available.includes('cancelled');
+  const paidOnline = order.paymentMethod === 'razorpay' && order.paymentStatus === 'paid';
+  // Cancelling a paid order refunds it, which only admin may do.
+  const canCancel = available.includes('cancelled') && (!paidOnline || canRefund);
+  const refundState = order.refundState ?? 'none';
+  const paymentLabel =
+    order.paymentStatus === 'paid'
+      ? { text: 'Paid · verified', color: colors.success }
+      : order.paymentStatus === 'refunded'
+        ? { text: 'Refunded', color: colors.success }
+        : order.paymentStatus === 'expired'
+          ? { text: 'Expired · never paid', color: colors.textMuted }
+          : order.paymentStatus === 'failed'
+            ? { text: 'Failed', color: colors.danger }
+            : { text: 'Pending', color: colors.warning };
+  const refundLabel = {
+    due: { text: 'Refund due', color: colors.warning },
+    pending: { text: 'Refund pending', color: colors.warning },
+    refunded: { text: 'Refunded', color: colors.success },
+    failed: { text: 'Refund failed', color: colors.danger },
+    none: null,
+  }[refundState];
   const isWholesale = order.items.some((item) => item.priceTier === 'wholesale');
 
   return (
@@ -166,13 +201,21 @@ export function AdminOrderDetailScreen() {
             />
             <Row
               label="Status"
-              right={
-                <StatusText
-                  label={order.paymentStatus === 'paid' ? 'Paid · verified' : 'Pending'}
-                  color={order.paymentStatus === 'paid' ? colors.success : colors.warning}
-                />
-              }
+              right={<StatusText label={paymentLabel.text} color={paymentLabel.color} />}
             />
+            {refundLabel ? (
+              <Row
+                label="Refund"
+                detail={
+                  refundState === 'failed' && order.refund?.failureReason
+                    ? order.refund.failureReason
+                    : order.lateCapture
+                      ? 'Paid after the order was cancelled — refunded automatically'
+                      : undefined
+                }
+                right={<StatusText label={refundLabel.text} color={refundLabel.color} />}
+              />
+            ) : null}
             <Row label="Subtotal" value={formatPaise(order.subtotal)} />
             <Row
               label="Shipping"
@@ -222,6 +265,22 @@ export function AdminOrderDetailScreen() {
           <Text style={styles.totalValue}>{formatPaise(order.totalAmount)}</Text>
         </View>
 
+        {order.cancellationRequest && order.orderStatus !== 'cancelled' ? (
+          <Text style={styles.requestNote}>
+            Customer asked to cancel
+            {order.cancellationRequest.reason ? `: "${order.cancellationRequest.reason}"` : ''}.
+            {canRefund ? ' Cancelling refunds them in full.' : ' An admin can cancel and refund it.'}
+          </Text>
+        ) : null}
+
+        {canRefund && (refundState === 'due' || refundState === 'failed') ? (
+          <Button
+            label={refundState === 'failed' ? 'Retry refund' : 'Send refund'}
+            onPress={() => void retryRefund()}
+            loading={updating}
+          />
+        ) : null}
+
         {canUpdateStatus && advance ? (
           <Button
             label={`Mark as ${orderStatusStyle[advance].label}`}
@@ -246,6 +305,12 @@ export function AdminOrderDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+  requestNote: {
+    ...typography.footnote,
+    color: colors.warning,
+    textAlign: 'center',
+    marginBottom: spacing.md,
+  },
   scroll: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xl },
   placedOn: { ...typography.caption, color: colors.textFaint, paddingTop: spacing.sm },
   block: { marginTop: spacing.xl },

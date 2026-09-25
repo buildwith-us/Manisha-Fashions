@@ -297,6 +297,9 @@ export const adminApi = {
 
   orderDetail: (id: string) => get<Order>(`/admin/orders/${id}`),
 
+  /** Sends (or re-sends) the refund for a cancelled order that was paid online. Admin only. */
+  retryRefund: (id: string) => post<Order>(`/admin/orders/${id}/refund`),
+
   updateOrderStatus: (id: string, status: OrderStatus, note?: string) =>
     patch<Order>(`/admin/orders/${id}/status`, { status, note }),
 

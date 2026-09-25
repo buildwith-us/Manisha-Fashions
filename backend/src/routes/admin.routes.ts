@@ -43,6 +43,14 @@ router.get(
   orderController.detailForAdmin,
 );
 
+router.post(
+  '/orders/:id/refund',
+  validate({ params: objectIdParam() }),
+  writeLimiter,
+  requirePermission(PERMISSIONS.ORDER_REFUND),
+  orderController.retryRefund,
+);
+
 router.patch(
   '/orders/:id/status',
   validate({ params: objectIdParam(), body: updateOrderStatusSchema }),

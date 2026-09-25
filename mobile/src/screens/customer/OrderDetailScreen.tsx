@@ -58,6 +58,35 @@ export function OrderDetailScreen() {
     void load();
   }, [load]);
 
+  const requestCancellation = () => {
+    Alert.alert(
+      'Request cancellation?',
+      "This order is already paid, so the store reviews cancellations. If it's cancelled, you'll be refunded in full.",
+      [
+        { text: 'Keep order', style: 'cancel' },
+        {
+          text: 'Request cancellation',
+          style: 'destructive',
+          onPress: async () => {
+            setCancelling(true);
+            const result = await dispatch(
+              cancelOrder({ orderId: params.orderId, reason: 'Requested by customer' }),
+            );
+            setCancelling(false);
+            if (cancelOrder.fulfilled.match(result)) {
+              setOrder(result.payload);
+            } else {
+              Alert.alert(
+                'Could not send the request',
+                typeof result.payload === 'string' ? result.payload : 'Please try again.',
+              );
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const handleCancel = () => {
     Alert.alert(
       'Cancel this order?',
@@ -219,11 +248,29 @@ export function OrderDetailScreen() {
       <View style={styles.footer}>
         <View style={styles.totalRow}>
           <Text style={styles.totalLabel}>
-            {order.paymentStatus === 'paid' ? 'Paid' : 'Payable'} ·{' '}
-            {order.paymentMethod === 'cod' ? 'On delivery' : 'Online'}
+            {order.paymentStatus === 'refunded'
+              ? 'Refunded'
+              : order.paymentStatus === 'paid'
+                ? 'Paid'
+                : order.paymentStatus === 'expired'
+                  ? 'Not paid'
+                  : 'Payable'}{' '}
+            · {order.paymentMethod === 'cod' ? 'On delivery' : 'Online'}
           </Text>
           <Text style={styles.totalValue}>{formatPaise(order.totalAmount)}</Text>
         </View>
+
+        {/* Refund progress, in the customer's words — "due" and "failed" are
+            both simply "being arranged" from their side. */}
+        {order.refundState && order.refundState !== 'none' ? (
+          <Text style={styles.footerNote}>
+            {order.refundState === 'refunded'
+              ? 'Your payment has been refunded.'
+              : order.refundState === 'pending'
+                ? 'Refund on its way — it can take 5–7 working days to reach your account.'
+                : 'Your refund is being arranged by the store.'}
+          </Text>
+        ) : null}
 
         {order.cancellable ? (
           <PressableScale onPress={handleCancel} disabled={cancelling} style={styles.cancel}>
@@ -231,6 +278,16 @@ export function OrderDetailScreen() {
               {cancelling ? 'Cancelling…' : 'Cancel order'}
             </Text>
           </PressableScale>
+        ) : order.cancellationRequestable ? (
+          <PressableScale onPress={requestCancellation} disabled={cancelling} style={styles.cancel}>
+            <Text style={styles.cancelLabel}>
+              {cancelling ? 'Sending…' : 'Request cancellation'}
+            </Text>
+          </PressableScale>
+        ) : order.cancellationRequest && order.orderStatus !== 'cancelled' ? (
+          <Text style={styles.footerNote}>
+            Cancellation requested. The store will review it and contact you.
+          </Text>
         ) : null}
       </View>
     </Screen>
@@ -238,6 +295,12 @@ export function OrderDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+  footerNote: {
+    ...typography.footnote,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginTop: spacing.md,
+  },
   scroll: { paddingHorizontal: spacing.xl, paddingTop: spacing.md, paddingBottom: spacing.xl },
   block: { marginTop: spacing.xl },
 

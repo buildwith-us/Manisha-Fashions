@@ -24,6 +24,11 @@ export const PERMISSIONS = {
 
   ORDER_READ_ALL: 'order:read:all',
   ORDER_STATUS_UPDATE: 'order:status:update',
+  /**
+   * Cancelling a PAID order sends money back, so it sits with admin alongside
+   * pricing (PRD 8.9) — staff can still cancel unpaid orders.
+   */
+  ORDER_REFUND: 'order:refund',
 
   WHOLESALE_APPROVE: 'wholesale:approve',
   USER_MANAGE: 'user:manage',
@@ -61,6 +66,7 @@ const ADMIN_PERMISSIONS: Permission[] = [
   ...STAFF_PERMISSIONS,
   PERMISSIONS.PRODUCT_PRICE_MANAGE,
   PERMISSIONS.COD_CONFIG_MANAGE,
+  PERMISSIONS.ORDER_REFUND,
   PERMISSIONS.WHOLESALE_APPROVE,
   PERMISSIONS.USER_MANAGE,
   PERMISSIONS.ORDER_READ_OWN,

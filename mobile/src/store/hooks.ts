@@ -17,6 +17,7 @@ export const PERMISSIONS = {
   CATEGORY_MANAGE: 'category:manage',
   ORDER_READ_ALL: 'order:read:all',
   ORDER_STATUS_UPDATE: 'order:status:update',
+  ORDER_REFUND: 'order:refund',
   WHOLESALE_APPROVE: 'wholesale:approve',
   USER_MANAGE: 'user:manage',
   DASHBOARD_VIEW: 'dashboard:view',

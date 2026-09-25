@@ -121,6 +121,12 @@ const envSchema = z.object({
   PASSWORD_RESET_LOCKOUT_MINUTES: z.coerce.number().int().positive().default(10),
   /** Per email *and* per IP, enforced in the reset service (PRD 8.11). */
   FORGOT_PASSWORD_MAX_PER_HOUR: z.coerce.number().int().positive().default(3),
+
+  // ── Online payments left unfinished ──
+  /** An unpaid online order is expired, and its stock released, after this long. */
+  PENDING_PAYMENT_TTL_MINUTES: z.coerce.number().int().positive().default(30),
+  /** How often the server sweeps for such orders (also once at boot). */
+  ORDER_EXPIRY_SWEEP_MINUTES: z.coerce.number().int().positive().default(5),
 });
 
 const parsed = envSchema.safeParse(process.env);

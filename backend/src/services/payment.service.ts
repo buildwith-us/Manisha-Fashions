@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { env, razorpayConfigured } from '../config/env';
+import { env, isProduction, razorpayConfigured } from '../config/env';
 import { getRazorpay } from '../config/razorpay';
 import { logger } from '../config/logger';
 import { ApiError } from '../utils/ApiError';
@@ -76,6 +76,138 @@ export function verifyWebhookSignature(rawBody: Buffer | string, signature: stri
     .digest('hex');
 
   return timingSafeEqual(expected, signature);
+}
+
+/* ── Refunds ────────────────────────────────────────────────────────────── */
+
+export interface RefundOutcome {
+  razorpayRefundId: string;
+  status: 'pending' | 'processed' | 'failed';
+  amount: number;
+}
+
+function refundStatus(status: unknown): RefundOutcome['status'] {
+  return status === 'processed' || status === 'failed' ? status : 'pending';
+}
+
+/**
+ * A refund already raised against this payment for this order, if any.
+ *
+ * The idempotency check behind every refund attempt: if an earlier call
+ * reached Razorpay but its response was lost (timeout, crash), retrying must
+ * adopt that refund rather than send the money twice.
+ */
+export async function findExistingRefund(
+  razorpayPaymentId: string,
+  orderNumber: string,
+): Promise<RefundOutcome | null> {
+  const razorpay = getRazorpay();
+  if (!razorpay) return null;
+  const { items } = await razorpay.payments.fetchMultipleRefund(razorpayPaymentId, { count: 100 });
+  const match = items.find(
+    (refund) => refund.notes?.orderNumber === orderNumber && refundStatus(refund.status) !== 'failed',
+  );
+  return match
+    ? { razorpayRefundId: match.id, status: refundStatus(match.status), amount: Number(match.amount) }
+    : null;
+}
+
+/** Full refund of a captured payment, tagged with the order it belongs to. */
+export async function refundPayment(input: {
+  razorpayPaymentId: string;
+  amountInPaise: number;
+  orderNumber: string;
+}): Promise<RefundOutcome> {
+  const razorpay = getRazorpay();
+  if (!razorpay || !razorpayConfigured) {
+    throw ApiError.serviceUnavailable('Online payments are not configured, so this refund cannot be sent.');
+  }
+  const refund = await razorpay.payments.refund(input.razorpayPaymentId, {
+    amount: input.amountInPaise,
+    speed: 'normal',
+    receipt: input.orderNumber,
+    notes: { orderNumber: input.orderNumber },
+  });
+  return { razorpayRefundId: refund.id, status: refundStatus(refund.status), amount: Number(refund.amount) };
+}
+
+/**
+ * Whether Razorpay holds a captured payment for this Razorpay order — asked
+ * before expiring an unpaid order, in case the webhook is merely late.
+ * Resolves null when it cannot tell (not configured, or the API failed).
+ */
+export async function capturedPaymentFor(razorpayOrderId: string): Promise<string | null | undefined> {
+  const razorpay = getRazorpay();
+  if (!razorpay) return undefined;
+  try {
+    const { items } = await razorpay.orders.fetchPayments(razorpayOrderId);
+    return items.find((payment) => payment.status === 'captured')?.id ?? null;
+  } catch (error) {
+    logger.warn(`Could not ask Razorpay about order ${razorpayOrderId}`, error);
+    return undefined;
+  }
+}
+
+/* ── Startup configuration check ────────────────────────────────────────── */
+
+/**
+ * Logs, at boot, anything about the Razorpay setup that would break or
+ * mislead: half-set keys, a malformed key id, test keys in production (or live
+ * keys elsewhere), a missing webhook secret, and — by making one read-only API
+ * call — a key id and secret that do not belong together (e.g. a test key with
+ * a live secret). Keys come only from the environment; nothing is hardcoded,
+ * and the app receives the key id from GET /config.
+ */
+export async function checkRazorpayConfig(): Promise<void> {
+  const keyId = env.RAZORPAY_KEY_ID ?? '';
+  const hasSecret = Boolean(env.RAZORPAY_KEY_SECRET);
+  const hasWebhookSecret = Boolean(env.RAZORPAY_WEBHOOK_SECRET);
+
+  if (!keyId && !hasSecret) {
+    logger.warn('[razorpay] Not configured: online payment is OFF, customers can only choose Cash on Delivery.');
+    if (hasWebhookSecret) logger.warn('[razorpay] RAZORPAY_WEBHOOK_SECRET is set but the API keys are not.');
+    return;
+  }
+  if (!keyId || !hasSecret) {
+    logger.error('[razorpay] Only one of RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET is set — online payment is OFF.');
+    return;
+  }
+
+  const mode = keyId.startsWith('rzp_live_') ? 'live' : keyId.startsWith('rzp_test_') ? 'test' : null;
+  if (!mode) {
+    logger.error('[razorpay] RAZORPAY_KEY_ID does not start with rzp_live_ or rzp_test_ — check it was copied whole.');
+  } else if (isProduction && mode === 'test') {
+    logger.warn('[razorpay] TEST keys in production: payments are simulated and no money moves.');
+  } else if (!isProduction && mode === 'live') {
+    logger.warn('[razorpay] LIVE keys outside production: real money will move from this environment.');
+  } else {
+    logger.info(`[razorpay] ${mode.toUpperCase()} mode.`);
+  }
+
+  if (!hasWebhookSecret) {
+    logger.error(
+      '[razorpay] RAZORPAY_WEBHOOK_SECRET is not set: webhooks are rejected, so a payment completed after the app ' +
+        'closes, and refund results, are never recorded. Set it to the secret of the webhook in the Razorpay dashboard ' +
+        `(${mode ?? 'matching'} mode).`,
+    );
+  }
+
+  const razorpay = getRazorpay();
+  if (!razorpay) return;
+  try {
+    await razorpay.orders.all({ count: 1 });
+    logger.info('[razorpay] Key id and secret verified with Razorpay.');
+  } catch (error) {
+    const status = (error as { statusCode?: number }).statusCode;
+    if (status === 401) {
+      logger.error(
+        '[razorpay] Razorpay rejected RAZORPAY_KEY_ID + RAZORPAY_KEY_SECRET: they do not belong together ' +
+          '(e.g. a test key id with a live secret, or a regenerated secret). Online checkout will fail.',
+      );
+    } else {
+      logger.warn('[razorpay] Could not verify the keys with Razorpay right now', error);
+    }
+  }
 }
 
 function timingSafeEqual(a: string, b: string): boolean {

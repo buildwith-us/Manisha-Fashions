@@ -23,7 +23,11 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export const PAYMENT_METHODS = ['razorpay', 'cod'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
-export const PAYMENT_STATUSES = ['pending', 'paid', 'failed', 'refunded'] as const;
+/**
+ * `expired`: an online payment that was never completed within
+ * PENDING_PAYMENT_TTL_MINUTES; the order was cancelled and its stock released.
+ */
+export const PAYMENT_STATUSES = ['pending', 'paid', 'failed', 'refunded', 'expired'] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
 /** Valid forward transitions for the order lifecycle (PRD 4.5). */

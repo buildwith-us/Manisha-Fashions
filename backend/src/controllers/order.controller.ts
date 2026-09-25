@@ -64,13 +64,22 @@ export const razorpayWebhook = asyncHandler(async (req: Request, res: Response) 
     throw ApiError.unauthorized('Invalid webhook signature', 'INVALID_SIGNATURE');
   }
 
-  // Acknowledge fast — Razorpay retries on a slow or failed response, and the
-  // handler is idempotent, so processing after the 200 is safe.
-  res.status(200).json({ success: true });
-
+  // Process FIRST, acknowledge after. Razorpay retries any non-2xx, so a
+  // failure here (database down, a crash mid-update) is answered with a 5xx
+  // and the event comes back — instead of being acknowledged and lost, which
+  // left paid orders stuck as pending. The handler is idempotent, so a retry
+  // of an event that did partly apply is safe.
   try {
     await orderService.handlePaymentWebhook(req.body);
   } catch (error) {
-    logger.error('Razorpay webhook processing failed', error);
+    logger.error('Razorpay webhook processing failed; answering 500 so Razorpay retries', error);
+    res.status(500).json({ success: false, error: { code: 'WEBHOOK_PROCESSING_FAILED', message: 'Retry later' } });
+    return;
   }
+  res.status(200).json({ success: true });
+});
+
+/** Admin: send (or re-send) the refund for a cancelled order that was paid online. */
+export const retryRefund = asyncHandler(async (req: Request, res: Response) => {
+  res.success(await orderService.retryRefund(req.params.id));
 });

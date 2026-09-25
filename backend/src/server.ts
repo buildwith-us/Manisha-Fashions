@@ -3,10 +3,18 @@ import { connectDatabase, disconnectDatabase } from './config/database';
 import { env } from './config/env';
 import { logger } from './config/logger';
 import { disconnectStore, initStore } from './config/store';
+import { checkRazorpayConfig } from './services/payment.service';
+import { startPendingPaymentSweep, stopPendingPaymentSweep } from './services/order.service';
 
 async function bootstrap(): Promise<void> {
   initStore();
   await connectDatabase();
+
+  // Logs half-set, mismatched, or test-in-production Razorpay keys. Never
+  // blocks boot: COD keeps working without online payment.
+  void checkRazorpayConfig();
+  // Expires online orders left unpaid and releases their stock.
+  startPendingPaymentSweep();
 
   const app = createApp();
   const server = app.listen(env.PORT, () => {
@@ -16,6 +24,7 @@ async function bootstrap(): Promise<void> {
 
   const shutdown = async (signal: string) => {
     logger.info(`${signal} received — shutting down.`);
+    stopPendingPaymentSweep();
     server.close(async () => {
       await disconnectDatabase();
       await disconnectStore();

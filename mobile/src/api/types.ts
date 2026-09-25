@@ -2,7 +2,11 @@ export type AccountType = 'retail' | 'wholesale' | 'staff' | 'admin';
 export type WholesaleStatus = 'none' | 'pending' | 'approved' | 'rejected';
 export type OrderStatus = 'placed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
 export type PaymentMethod = 'razorpay' | 'cod';
-export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
+/** `expired`: an online payment never completed in time; the order was cancelled. */
+export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded' | 'expired';
+
+/** Where the money stands on a paid order that did not go ahead. */
+export type RefundState = 'none' | 'due' | 'pending' | 'refunded' | 'failed';
 export type PriceTier = 'retail' | 'wholesale';
 /** Storefront a product is shown in — 'both' is the default. */
 export type ProductVisibility = 'both' | 'retail' | 'wholesale';
@@ -156,7 +160,15 @@ export interface Order {
   currency: string;
   orderStatus: OrderStatus;
   statusHistory: Array<{ status: OrderStatus; at: string; note?: string }>;
+  /** The customer may cancel outright: still placed and nothing paid. */
   cancellable: boolean;
+  /** Paid and not shipped: the customer can ask the store to cancel (and refund). */
+  cancellationRequestable?: boolean;
+  cancellationRequest?: { requestedAt: string; reason?: string };
+  refundState?: RefundState;
+  refund?: { status: string; amount?: number; failureReason?: string; processedAt?: string };
+  /** Payment arrived after the order had been cancelled or expired; refunded automatically. */
+  lateCapture?: boolean;
   /**
    * True for a "Buy now" order. The server built it from one product rather
    * than the cart and left the cart intact, so the client must not clear its

@@ -7,7 +7,7 @@ import { User } from '../models/user.model';
 import * as productRepository from '../repositories/product.repository';
 import { effectivePriceFor, priceTierFor } from '../serializers/product.serializer';
 import { ApiError } from '../utils/ApiError';
-import { isProductVisibleTo } from '../utils/rbac';
+import { PERMISSIONS, isProductVisibleTo } from '../utils/rbac';
 import { ORDER_STATUS_TRANSITIONS, type OrderStatus, type PaymentMethod } from '../types';
 import type { AuthenticatedUser } from '../types';
 import * as codService from './cod.service';
@@ -36,7 +36,26 @@ export interface SerializedOrder {
   currency: string;
   orderStatus: OrderStatus;
   statusHistory: Array<{ status: OrderStatus; at: string; note?: string }>;
+  /** The customer may cancel it outright (still placed, nothing paid). */
   cancellable: boolean;
+  /**
+   * Paid and not yet shipped: the customer cannot cancel (that would owe a
+   * refund) but may ASK the store to, which is recorded in cancellationRequest.
+   */
+  cancellationRequestable: boolean;
+  cancellationRequest?: { requestedAt: string; reason?: string };
+  /**
+   * Where the money stands on a paid order that did not go ahead:
+   *   due      — cancelled after payment, no refund sent yet
+   *   pending  — refund sent, Razorpay has not confirmed it
+   *   refunded — money returned
+   *   failed   — the refund attempt failed; retry from admin
+   *   none     — nothing owed
+   */
+  refundState: 'none' | 'due' | 'pending' | 'refunded' | 'failed';
+  refund?: { status: string; amount?: number; failureReason?: string; processedAt?: string };
+  /** Payment was captured after the order had been cancelled or expired. */
+  lateCapture: boolean;
   /** True for a "Buy now" order, so the client knows not to clear its cart. */
   fromBuyNow: boolean;
   customer?: { id: string; name?: string; phone: string };
@@ -77,8 +96,34 @@ export function serializeOrder(
       at: event.at.toISOString(),
       note: event.note,
     })),
-    // PRD 4.5 — cancellable only while still "placed", before processing begins.
-    cancellable: order.orderStatus === 'placed',
+    // PRD 4.5 — cancellable only while still "placed", before processing
+    // begins, and only while nothing has been paid (a paid order needs a refund,
+    // which the store handles).
+    cancellable: order.orderStatus === 'placed' && order.paymentStatus !== 'paid',
+    cancellationRequestable:
+      order.paymentStatus === 'paid' &&
+      (order.orderStatus === 'placed' || order.orderStatus === 'processing') &&
+      !order.cancellationRequest?.requestedAt,
+    ...(order.cancellationRequest?.requestedAt
+      ? {
+          cancellationRequest: {
+            requestedAt: order.cancellationRequest.requestedAt.toISOString(),
+            reason: order.cancellationRequest.reason,
+          },
+        }
+      : {}),
+    refundState: refundStateOf(order),
+    ...(order.refund?.status
+      ? {
+          refund: {
+            status: order.refund.status,
+            amount: order.refund.amount,
+            failureReason: order.refund.failureReason,
+            processedAt: order.refund.processedAt?.toISOString(),
+          },
+        }
+      : {}),
+    lateCapture: order.payment?.lateCapture === true,
     fromBuyNow: order.fromBuyNow ?? false,
     ...(options.includeCustomer && populatedUser && 'phone' in populatedUser
       ? {
@@ -92,6 +137,15 @@ export function serializeOrder(
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),
   };
+}
+
+function refundStateOf(order: IOrder): SerializedOrder['refundState'] {
+  const status = order.refund?.status;
+  if (status === 'processed' || order.paymentStatus === 'refunded') return 'refunded';
+  if (status === 'initiating' || status === 'pending') return 'pending';
+  if (status === 'failed') return 'failed';
+  if (order.paymentStatus === 'paid' && order.orderStatus === 'cancelled') return 'due';
+  return 'none';
 }
 
 /* ── Checkout ───────────────────────────────────────────────────────────── */
@@ -265,7 +319,7 @@ export async function confirmPayment(
 ): Promise<SerializedOrder> {
   const order = await Order.findOne({ _id: input.orderId, userId: viewer.id });
   if (!order) throw ApiError.notFound('Order not found');
-  if (order.paymentStatus === 'paid') return serializeOrder(order);
+  if (order.paymentStatus === 'paid' || order.paymentStatus === 'refunded') return serializeOrder(order);
   if (!order.payment?.razorpayOrderId) {
     throw ApiError.badRequest('This order has no online payment attached');
   }
@@ -281,6 +335,15 @@ export async function confirmPayment(
     order.payment.failureReason = 'Signature verification failed';
     await order.save();
     throw ApiError.badRequest('Payment could not be verified');
+  }
+
+  // Paid for an order that no longer exists (expired, or cancelled while the
+  // payment was in flight): record the money and send it straight back.
+  if (order.orderStatus === 'cancelled') {
+    await recordLateCapture(order, input.razorpayPaymentId);
+    throw ApiError.conflict(
+      'This order was cancelled before your payment completed. Your payment is being refunded — no action needed.',
+    );
   }
 
   order.paymentStatus = 'paid';
@@ -299,14 +362,40 @@ export async function confirmPayment(
 }
 
 /**
+ * Money captured for an order that was already cancelled or expired. Never
+ * kept silently: the payment is recorded, flagged, and refunded. If the
+ * refund cannot be sent, the order shows "Refund failed" to admin.
+ */
+async function recordLateCapture(order: IOrder, razorpayPaymentId: string | undefined): Promise<void> {
+  logger.warn(`Payment captured after order ${order.orderNumber} was ${order.orderStatus}; refunding.`);
+  order.paymentStatus = 'paid';
+  order.payment = {
+    ...order.payment,
+    razorpayPaymentId: razorpayPaymentId ?? order.payment?.razorpayPaymentId,
+    paidAt: new Date(),
+    lateCapture: true,
+  };
+  await order.save();
+  await refundOrder(order._id.toString());
+}
+
+/**
  * PRD 4.4 — webhook handling. The webhook is authoritative: it arrives even if
  * the app is killed mid-payment, so it must reach the same end state as
  * confirmPayment.
  */
 export async function handlePaymentWebhook(event: {
   event: string;
-  payload: { payment?: { entity?: { order_id?: string; id?: string; error_description?: string } } };
+  payload: {
+    payment?: { entity?: { order_id?: string; id?: string; error_description?: string } };
+    refund?: { entity?: { id?: string; payment_id?: string; status?: string; amount?: number } };
+  };
 }): Promise<void> {
+  if (event.event === 'refund.processed' || event.event === 'refund.failed') {
+    await handleRefundWebhook(event.event, event.payload?.refund?.entity);
+    return;
+  }
+
   const entity = event.payload?.payment?.entity;
   const razorpayOrderId = entity?.order_id;
   if (!razorpayOrderId) return;
@@ -317,7 +406,17 @@ export async function handlePaymentWebhook(event: {
     return;
   }
 
-  if (event.event === 'payment.captured' && order.paymentStatus !== 'paid') {
+  if (
+    event.event === 'payment.captured' &&
+    order.orderStatus === 'cancelled' &&
+    order.paymentStatus !== 'paid' &&
+    order.paymentStatus !== 'refunded'
+  ) {
+    await recordLateCapture(order, entity?.id);
+    return;
+  }
+
+  if (event.event === 'payment.captured' && order.paymentStatus !== 'paid' && order.paymentStatus !== 'refunded') {
     order.paymentStatus = 'paid';
     order.payment = {
       ...order.payment,
@@ -349,6 +448,115 @@ export async function handlePaymentWebhook(event: {
 }
 
 /**
+ * refund.processed / refund.failed. Finds the order by the refund id, or by
+ * the payment when the refund was raised outside the app (Razorpay dashboard).
+ */
+async function handleRefundWebhook(
+  kind: 'refund.processed' | 'refund.failed',
+  refund: { id?: string; payment_id?: string; status?: string; amount?: number } | undefined,
+): Promise<void> {
+  if (!refund?.id) return;
+  const order =
+    (await Order.findOne({ 'refund.razorpayRefundId': refund.id })) ??
+    (refund.payment_id ? await Order.findOne({ 'payment.razorpayPaymentId': refund.payment_id }) : null);
+  if (!order) {
+    logger.warn(`Refund webhook for unknown refund ${refund.id}`);
+    return;
+  }
+  // Already final: a replayed or out-of-order event changes nothing.
+  if (order.refund?.status === 'processed') return;
+
+  const base = {
+    attempts: order.refund?.attempts ?? 0,
+    initiatedAt: order.refund?.initiatedAt ?? new Date(),
+    razorpayRefundId: refund.id,
+    amount: refund.amount ?? order.refund?.amount,
+  };
+  if (kind === 'refund.processed') {
+    order.refund = { ...base, status: 'processed', processedAt: new Date() };
+    order.paymentStatus = 'refunded';
+  } else {
+    order.refund = { ...base, status: 'failed', failureReason: 'Razorpay reported the refund as failed' };
+  }
+  await order.save();
+}
+
+/**
+ * Sends a paid order's money back. Safe to call more than once, from any path.
+ *
+ *  - Claimed atomically: only one caller can move the refund to "initiating",
+ *    so two admins (or the admin and the late-capture path) cannot both pay out.
+ *  - Before calling Razorpay, looks for a refund already raised for this
+ *    order, in case an earlier attempt reached Razorpay but its answer was
+ *    lost. That refund is adopted instead of sending a second one.
+ *  - A failure is recorded, not thrown: the order shows "Refund failed" and
+ *    admin can retry.
+ */
+export async function refundOrder(orderId: string): Promise<IOrder | null> {
+  const claimed = await Order.findOneAndUpdate(
+    {
+      _id: orderId,
+      paymentMethod: 'razorpay',
+      paymentStatus: 'paid',
+      'payment.razorpayPaymentId': { $exists: true },
+      $or: [{ 'refund.status': { $exists: false } }, { 'refund.status': 'failed' }],
+    },
+    {
+      $set: { 'refund.status': 'initiating', 'refund.initiatedAt': new Date() },
+      $unset: { 'refund.failureReason': 1 },
+      $inc: { 'refund.attempts': 1 },
+    },
+    { new: true },
+  );
+  if (!claimed) return Order.findById(orderId);
+
+  const paymentId = claimed.payment?.razorpayPaymentId as string;
+  try {
+    const outcome =
+      (await paymentService.findExistingRefund(paymentId, claimed.orderNumber)) ??
+      (await paymentService.refundPayment({
+        razorpayPaymentId: paymentId,
+        amountInPaise: claimed.totalAmount,
+        orderNumber: claimed.orderNumber,
+      }));
+    return Order.findByIdAndUpdate(
+      orderId,
+      {
+        $set: {
+          'refund.status': outcome.status,
+          'refund.razorpayRefundId': outcome.razorpayRefundId,
+          'refund.amount': outcome.amount,
+          ...(outcome.status === 'processed'
+            ? { 'refund.processedAt': new Date(), paymentStatus: 'refunded' }
+            : {}),
+        },
+      },
+      { new: true },
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    logger.error(`Refund for order ${claimed.orderNumber} failed`, error);
+    return Order.findByIdAndUpdate(
+      orderId,
+      { $set: { 'refund.status': 'failed', 'refund.failureReason': reason.slice(0, 500) } },
+      { new: true },
+    );
+  }
+}
+
+/** Admin "Retry refund" on a cancelled paid order whose refund is due or failed. */
+export async function retryRefund(orderId: string): Promise<SerializedOrder> {
+  const order = await Order.findById(orderId);
+  if (!order) throw ApiError.notFound('Order not found');
+  if (order.orderStatus !== 'cancelled' || order.paymentStatus !== 'paid') {
+    throw ApiError.conflict('Only a cancelled order that was paid online can be refunded.');
+  }
+  const updated = await refundOrder(orderId);
+  const populated = await Order.findById(updated?._id ?? orderId).populate('userId', 'name phone');
+  return serializeOrder(populated as IOrder, { includeCustomer: true });
+}
+
+/**
  * Credits this order's stock back, at most once.
  *
  * The customer, the store and the payment.failed webhook can all cancel the
@@ -359,7 +567,15 @@ export async function handlePaymentWebhook(event: {
  */
 async function releaseStock(order: IOrder): Promise<void> {
   if (order.stockReleasedAt) return;
-  order.stockReleasedAt = new Date();
+  const releasedAt = new Date();
+  // Claimed in the database, not just on this document: the expiry sweep, a
+  // webhook and an admin can race on the same order across requests.
+  const claim = await Order.updateOne(
+    { _id: order._id, stockReleasedAt: { $exists: false } },
+    { $set: { stockReleasedAt: releasedAt } },
+  );
+  order.stockReleasedAt = releasedAt;
+  if (claim.modifiedCount !== 1) return;
 
   for (const item of order.items) {
     await productRepository.incrementStock(item.productId.toString(), item.quantity);
@@ -448,6 +664,24 @@ export async function cancelMyOrder(
   const order = await Order.findOne({ _id: orderId, userId });
   if (!order) throw ApiError.notFound('Order not found');
 
+  // Paid online: cancelling owes a refund, which is the store's decision. The
+  // request is recorded (once) for admin, and the order is left as it is.
+  if (order.paymentStatus === 'paid') {
+    if (order.orderStatus !== 'placed' && order.orderStatus !== 'processing') {
+      throw ApiError.conflict('This order has already shipped. Please contact the store about a return.');
+    }
+    if (!order.cancellationRequest?.requestedAt) {
+      order.cancellationRequest = { requestedAt: new Date(), reason };
+      order.statusHistory.push({
+        status: order.orderStatus,
+        at: new Date(),
+        note: `Customer requested cancellation${reason ? `: ${reason}` : ''}`,
+      });
+      await order.save();
+    }
+    return serializeOrder(order);
+  }
+
   if (order.orderStatus !== 'placed') {
     throw ApiError.conflict(
       order.orderStatus === 'cancelled'
@@ -482,6 +716,11 @@ export async function updateOrderStatus(
     );
   }
 
+  const paidOnline = order.paymentMethod === 'razorpay' && order.paymentStatus === 'paid';
+  if (nextStatus === 'cancelled' && paidOnline && !actor.permissions.includes(PERMISSIONS.ORDER_REFUND)) {
+    throw ApiError.forbidden('This order was paid online. Only an admin can cancel it, because cancelling refunds the customer.');
+  }
+
   if (nextStatus === 'cancelled') {
     await releaseStock(order);
     order.cancelledAt = new Date();
@@ -492,5 +731,97 @@ export async function updateOrderStatus(
   order.statusHistory.push({ status: nextStatus, at: new Date(), by: actor.id as never, note });
   await order.save();
 
+  if (nextStatus === 'cancelled' && paidOnline) {
+    // Recorded on the order either way; a failure shows as "Refund failed".
+    await refundOrder(order._id.toString());
+    const refreshed = await Order.findById(order._id).populate('userId', 'name phone');
+    return serializeOrder(refreshed as IOrder, { includeCustomer: true });
+  }
+
   return serializeOrder(order, { includeCustomer: true });
+}
+
+/* ── Unfinished online payments ─────────────────────────────────────────── */
+
+/**
+ * Expires online orders left unpaid for PENDING_PAYMENT_TTL_MINUTES: the order
+ * is cancelled with paymentStatus "expired" and its stock goes back on sale.
+ *
+ * Each order is claimed atomically, so overlapping sweeps (or a sweep racing a
+ * webhook) act on it once. Before expiring, Razorpay is asked whether a
+ * payment was in fact captured — a late webhook, not an unpaid order — and if
+ * so the order is marked paid instead. A capture that arrives AFTER expiry is
+ * handled by recordLateCapture (refunded, flagged), never lost.
+ */
+export async function expireStalePendingOrders(now: Date = new Date()): Promise<{ expired: number; paid: number }> {
+  const cutoff = new Date(now.getTime() - env.PENDING_PAYMENT_TTL_MINUTES * 60_000);
+  const stale = await Order.find({
+    paymentMethod: 'razorpay',
+    paymentStatus: 'pending',
+    orderStatus: 'placed',
+    createdAt: { $lt: cutoff },
+  })
+    .limit(200)
+    .select('_id payment.razorpayOrderId');
+
+  let expired = 0;
+  let paid = 0;
+  for (const candidate of stale) {
+    const razorpayOrderId = candidate.payment?.razorpayOrderId;
+    if (razorpayOrderId) {
+      const capturedId = await paymentService.capturedPaymentFor(razorpayOrderId);
+      if (capturedId) {
+        const marked = await Order.findOneAndUpdate(
+          { _id: candidate._id, paymentStatus: 'pending' },
+          { $set: { paymentStatus: 'paid', 'payment.razorpayPaymentId': capturedId, 'payment.paidAt': now } },
+        );
+        if (marked) paid += 1;
+        continue;
+      }
+    }
+
+    const claimed = await Order.findOneAndUpdate(
+      { _id: candidate._id, paymentStatus: 'pending', orderStatus: 'placed' },
+      {
+        $set: {
+          paymentStatus: 'expired',
+          orderStatus: 'cancelled',
+          cancelledAt: now,
+          cancellationReason: `Payment not completed within ${env.PENDING_PAYMENT_TTL_MINUTES} minutes`,
+        },
+        $push: {
+          statusHistory: {
+            status: 'cancelled',
+            at: now,
+            note: `Payment not completed within ${env.PENDING_PAYMENT_TTL_MINUTES} minutes`,
+          },
+        },
+      },
+      { new: true },
+    );
+    if (!claimed) continue;
+    await releaseStock(claimed);
+    expired += 1;
+  }
+
+  if (expired || paid) logger.info(`Pending-payment sweep: ${expired} expired, ${paid} found paid.`);
+  return { expired, paid };
+}
+
+let sweepTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Runs the sweep now and every ORDER_EXPIRY_SWEEP_MINUTES. Never in tests. */
+export function startPendingPaymentSweep(): void {
+  if (sweepTimer || env.NODE_ENV === 'test') return;
+  const run = () =>
+    expireStalePendingOrders().catch((error) => logger.error('Pending-payment sweep failed', error));
+  void run();
+  sweepTimer = setInterval(run, env.ORDER_EXPIRY_SWEEP_MINUTES * 60_000);
+  // A sleeping or shutting-down process should not be kept alive by this.
+  sweepTimer.unref();
+}
+
+export function stopPendingPaymentSweep(): void {
+  if (sweepTimer) clearInterval(sweepTimer);
+  sweepTimer = null;
 }

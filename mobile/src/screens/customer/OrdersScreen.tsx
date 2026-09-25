@@ -97,7 +97,11 @@ export function OrdersScreen() {
                   {order.paymentMethod === 'cod' ? 'COD' : 'Online'}
                   {order.paymentMethod === 'razorpay' && order.paymentStatus === 'pending'
                     ? ' · payment pending'
-                    : ''}
+                    : order.paymentStatus === 'expired'
+                      ? ' · payment not completed'
+                      : order.paymentStatus === 'refunded'
+                        ? ' · refunded'
+                        : ''}
                 </Text>
 
                 {!cancelled ? (

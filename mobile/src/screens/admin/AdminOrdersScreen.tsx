@@ -189,7 +189,17 @@ export function AdminOrdersScreen() {
                   <Text style={styles.meta} numberOfLines={1}>
                     {pieces} piece{pieces === 1 ? '' : 's'} ·{' '}
                     {item.paymentMethod === 'cod' ? 'COD' : 'Prepaid'}
-                    {item.paymentStatus === 'paid' ? ' paid' : ' pending'} ·{' '}
+                    {item.refundState === 'due' || item.refundState === 'failed'
+                      ? ' · refund due'
+                      : item.paymentStatus === 'paid'
+                        ? ' paid'
+                        : item.paymentStatus === 'refunded'
+                          ? ' refunded'
+                          : item.paymentStatus === 'expired'
+                            ? ' expired'
+                            : ' pending'}
+                    {item.cancellationRequest && item.orderStatus !== 'cancelled' ? ' · cancel requested' : ''}{' '}
+                    ·{' '}
                     {new Date(item.createdAt).toLocaleDateString('en-IN', {
                       day: 'numeric',
                       month: 'short',

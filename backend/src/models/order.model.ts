@@ -48,6 +48,28 @@ export interface IOrder extends Document<Types.ObjectId> {
     razorpaySignature?: string;
     failureReason?: string;
     paidAt?: Date;
+    /**
+     * The payment was captured after the order had already been cancelled or
+     * expired. Never silently kept: a refund is started automatically, and the
+     * order shows as needing attention until it is processed.
+     */
+    lateCapture?: boolean;
+  };
+  /** Money going back for a paid order that was cancelled. */
+  refund?: {
+    /** initiating: claimed by this server, Razorpay not yet answered. */
+    status: 'initiating' | 'pending' | 'processed' | 'failed';
+    razorpayRefundId?: string;
+    amount?: number;
+    attempts: number;
+    initiatedAt?: Date;
+    processedAt?: Date;
+    failureReason?: string;
+  };
+  /** A paid order the customer asked to cancel; the store decides and refunds. */
+  cancellationRequest?: {
+    requestedAt: Date;
+    reason?: string;
   };
   subtotal: number;
   shippingCharge: number;
@@ -123,6 +145,20 @@ const orderSchema = new Schema<IOrder>(
       razorpaySignature: { type: String },
       failureReason: { type: String },
       paidAt: { type: Date },
+      lateCapture: { type: Boolean },
+    },
+    refund: {
+      status: { type: String, enum: ['initiating', 'pending', 'processed', 'failed'] },
+      razorpayRefundId: { type: String },
+      amount: { type: Number, min: 0 },
+      attempts: { type: Number, default: 0 },
+      initiatedAt: { type: Date },
+      processedAt: { type: Date },
+      failureReason: { type: String, maxlength: 500 },
+    },
+    cancellationRequest: {
+      requestedAt: { type: Date },
+      reason: { type: String, maxlength: 300 },
     },
     subtotal: { type: Number, required: true, min: 0 },
     shippingCharge: { type: Number, required: true, min: 0, default: 0 },
@@ -141,5 +177,10 @@ const orderSchema = new Schema<IOrder>(
 orderSchema.index({ userId: 1, createdAt: -1 });
 orderSchema.index({ orderStatus: 1, createdAt: -1 });
 orderSchema.index({ createdAt: -1 });
+// The pending-payment expiry sweep and the admin "awaiting payment" count.
+orderSchema.index({ paymentMethod: 1, paymentStatus: 1, createdAt: 1 });
+// Refund webhooks find the order by the refund, or failing that the payment.
+orderSchema.index({ 'refund.razorpayRefundId': 1 }, { sparse: true });
+orderSchema.index({ 'payment.razorpayPaymentId': 1 }, { sparse: true });
 
 export const Order = model<IOrder>('Order', orderSchema);
