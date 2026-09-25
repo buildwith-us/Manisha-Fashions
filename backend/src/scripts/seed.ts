@@ -2,9 +2,11 @@
  * Seeds a workable catalog and the first admin account.
  *
  * Run with: npm run seed
+ * Refuses a non-local database (Atlas/production) unless run as
+ *   npm run seed -- --target=production
  * Safe to re-run — it upserts by natural key rather than wiping the database.
  */
-import { connectDatabase, disconnectDatabase } from '../config/database';
+import { connectScriptDatabase, disconnectDatabase } from '../config/database';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { Category, slugify } from '../models/category.model';
@@ -108,7 +110,7 @@ const PRODUCTS: Array<{
 ];
 
 async function seed(): Promise<void> {
-  await connectDatabase();
+  await connectScriptDatabase();
 
   const categoryIds = new Map<string, string>();
   for (const entry of CATEGORIES) {

@@ -44,14 +44,14 @@ async function main(): Promise<void> {
   process.env.RATE_LIMIT_AUTH_PER_MIN = '100000';
 
   const { createApp } = await import('../app');
-  const { connectDatabase, disconnectDatabase } = await import('../config/database');
+  const { connectScriptDatabase, disconnectDatabase } = await import('../config/database');
   const { initStore } = await import('../config/store');
   const { User } = await import('../models/user.model');
   const { Category } = await import('../models/category.model');
   const { Product } = await import('../models/product.model');
 
   initStore();
-  await connectDatabase();
+  await connectScriptDatabase();
 
   const app = createApp();
   const server: Server = await new Promise((resolve) => {

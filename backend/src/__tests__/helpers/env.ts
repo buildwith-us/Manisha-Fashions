@@ -1,3 +1,5 @@
+import { assertTestDatabase } from '../../config/dbTarget';
+
 /**
  * Runs before any module is imported (jest `setupFiles`), because
  * config/env.ts parses process.env at import time and throws if the required
@@ -6,8 +8,15 @@
  * MONGODB_URI only has to satisfy the schema — each test file connects to its
  * own in-memory mongod and never dials this value.
  */
+
+// Refuse to run at all if the shell handed us a real database. Overwriting it
+// below would be safe, but a test run pointed at Atlas is a mistake worth
+// stopping loudly rather than quietly correcting.
+if (process.env.MONGODB_URI) assertTestDatabase(process.env.MONGODB_URI);
+
 process.env.NODE_ENV = 'test';
 process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017/manisha_fashions_test';
+assertTestDatabase(process.env.MONGODB_URI);
 process.env.JWT_ACCESS_SECRET = 'test-access-secret-at-least-16-chars';
 process.env.JWT_REFRESH_SECRET = 'test-refresh-secret-at-least-16-chars';
 

@@ -11,14 +11,17 @@
  * Once one admin exists, prefer the in-app screen: Account → Customer & staff
  * accounts → Change role. This script is for the first one.
  *
- * Writes to whatever MONGODB_URI is set in backend/.env — which may be your
- * production database. It prints the target and the change it made.
+ * Writes to whatever MONGODB_URI is set in backend/.env. A non-local database
+ * (Atlas/production) is refused unless --target=production is passed. It
+ * prints the target and the change it made.
  *
  *   npm run make-admin -- owner@example.com
  *   npm run make-admin -- owner@example.com --name "Store Owner"
  *   npm run make-admin -- staff@example.com --role staff
+ *   npm run make-admin -- owner@example.com --target=production
  */
 import 'dotenv/config';
+import { PRODUCTION_TARGET_FLAG } from '../config/dbTarget';
 
 type Role = 'retail' | 'wholesale' | 'staff' | 'admin';
 const ASSIGNABLE: Role[] = ['retail', 'wholesale', 'staff', 'admin'];
@@ -39,6 +42,9 @@ function parseArgs(argv: string[]): Args {
     if (arg === '--name') {
       name = argv[i + 1];
       i += 1;
+    } else if (arg === PRODUCTION_TARGET_FLAG) {
+      // Read by connectScriptDatabase from process.argv; not a positional.
+      continue;
     } else if (arg === '--role') {
       const next = argv[i + 1] as Role;
       if (!ASSIGNABLE.includes(next)) {
@@ -54,7 +60,7 @@ function parseArgs(argv: string[]): Args {
   const raw = positional[0];
   if (!raw) {
     throw new Error(
-      'Usage: npm run make-admin -- <email> [--name "Full Name"] [--role admin|staff]',
+      'Usage: npm run make-admin -- <email> [--name "Full Name"] [--role admin|staff] [--target=production]',
     );
   }
 
@@ -71,7 +77,7 @@ async function main(): Promise<void> {
   const { email, name, role } = parseArgs(process.argv.slice(2));
 
   const { env } = await import('../config/env');
-  const { connectDatabase, disconnectDatabase } = await import('../config/database');
+  const { connectScriptDatabase, disconnectDatabase } = await import('../config/database');
   const { User } = await import('../models/user.model');
 
   // Show which database is being touched — this is the guard against
@@ -81,7 +87,7 @@ async function main(): Promise<void> {
   console.log(`Email    : ${email}`);
   console.log(`Role     : ${role}\n`);
 
-  await connectDatabase();
+  await connectScriptDatabase();
 
   try {
     const existing = await User.findOne({ email });

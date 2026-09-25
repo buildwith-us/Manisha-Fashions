@@ -3,6 +3,9 @@
  *
  *   npm run seed:demo
  *
+ * Refuses a non-local database (Atlas/production) unless run with
+ * --target=production. Demo products do not belong in the live catalogue.
+ *
  * Idempotent: every document written here carries the `demo-seed` tag, and the
  * script deletes only those before re-inserting. Running it twice does not
  * duplicate, and it never touches products you created yourself.
@@ -14,7 +17,7 @@
  * documents through the existing model. Prices are stored in paise, and every
  * wholesalePrice is set explicitly per product (never derived from retail).
  */
-import { connectDatabase, disconnectDatabase } from '../config/database';
+import { connectScriptDatabase, disconnectDatabase } from '../config/database';
 import { logger } from '../config/logger';
 import { Category, slugify } from '../models/category.model';
 import { Product } from '../models/product.model';
@@ -225,7 +228,7 @@ const PRODUCTS: DemoProduct[] = [
 ];
 
 async function seedDemoProducts(): Promise<void> {
-  await connectDatabase();
+  await connectScriptDatabase();
 
   // 1. Categories the demo products hang off. Upserted by slug, so re-running
   //    reuses them and any products you created keep their category.

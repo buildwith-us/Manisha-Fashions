@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { assertScriptWriteTarget, assertTestDatabase } from './dbTarget';
 import { env, isProduction } from './env';
 import { logger } from './logger';
 
@@ -21,6 +22,9 @@ function describeTarget(uri: string): string {
 }
 
 export async function connectDatabase(): Promise<void> {
+  // A test run never reaches Atlas, however it was configured.
+  if (env.NODE_ENV === 'test') assertTestDatabase(env.MONGODB_URI);
+
   mongoose.connection.on('connected', () => logger.info('MongoDB connected'));
   mongoose.connection.on('disconnected', () => logger.warn('MongoDB disconnected'));
   mongoose.connection.on('error', (error) => logger.error('MongoDB error', error));
@@ -46,6 +50,16 @@ export async function connectDatabase(): Promise<void> {
     }
     throw error;
   }
+}
+
+/**
+ * For CLI scripts that write data (seed, seed:demo, make-admin, smoke, audit,
+ * coverage, dev:memory). Refuses any non-local database unless the command was
+ * run with --target=production — see config/dbTarget.ts.
+ */
+export async function connectScriptDatabase(argv: readonly string[] = process.argv): Promise<void> {
+  assertScriptWriteTarget(env.MONGODB_URI, argv);
+  await connectDatabase();
 }
 
 export async function disconnectDatabase(): Promise<void> {

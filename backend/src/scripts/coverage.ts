@@ -60,12 +60,12 @@ async function main(): Promise<void> {
   process.env.CLOUDINARY_API_SECRET = '';
 
   const { createApp } = await import('../app');
-  const { connectDatabase, disconnectDatabase } = await import('../config/database');
+  const { connectScriptDatabase, disconnectDatabase } = await import('../config/database');
   const { initStore } = await import('../config/store');
   const { User } = await import('../models/user.model');
 
   initStore();
-  await connectDatabase();
+  await connectScriptDatabase();
 
   const inner = createApp();
 

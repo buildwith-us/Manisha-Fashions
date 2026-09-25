@@ -20,13 +20,13 @@ async function main(): Promise<void> {
     process.env.JWT_REFRESH_SECRET ?? 'dev-only-refresh-secret-0123456789abcdef';
 
   const { createApp } = await import('../app');
-  const { connectDatabase } = await import('../config/database');
+  const { connectScriptDatabase } = await import('../config/database');
   const { initStore } = await import('../config/store');
   const { env } = await import('../config/env');
   const { logger } = await import('../config/logger');
 
   initStore();
-  await connectDatabase();
+  await connectScriptDatabase();
 
   // Reuse the seed data so the catalogue is not empty on first launch.
   const { Category, slugify } = await import('../models/category.model');

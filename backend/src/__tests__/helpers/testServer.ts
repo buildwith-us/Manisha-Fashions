@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import supertest from 'supertest';
 import { createApp } from '../../app';
+import { assertTestDatabase } from '../../config/dbTarget';
 import { env } from '../../config/env';
 import { Cart } from '../../models/cart.model';
 import { Category, slugify } from '../../models/category.model';
@@ -25,7 +26,11 @@ export const api = (path: string) => `${env.API_PREFIX}${path}`;
 
 export async function connectTestDb(): Promise<void> {
   mongod = await MongoMemoryServer.create();
-  await mongoose.connect(mongod.getUri());
+  const uri = mongod.getUri();
+  // The last line of defence: whatever the environment says, a test only
+  // ever opens a connection to this machine.
+  assertTestDatabase(uri);
+  await mongoose.connect(uri);
 }
 
 export async function disconnectTestDb(): Promise<void> {
