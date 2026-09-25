@@ -121,6 +121,9 @@ describe('writing scripts refuse production without --target=production', () => 
         JWT_ACCESS_SECRET: 'guard-test-access-secret-0123456789',
         JWT_REFRESH_SECRET: 'guard-test-refresh-secret-0123456789',
         GOOGLE_WEB_CLIENT_ID: 'guard-test.apps.googleusercontent.com',
+        // So the seed script gets past its own password check and it is the
+        // production guard that refuses.
+        SEED_ADMIN_PASSWORD: 'guard-test-password-123',
       },
     });
   }

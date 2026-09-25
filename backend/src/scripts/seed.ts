@@ -110,6 +110,10 @@ const PRODUCTS: Array<{
 ];
 
 async function seed(): Promise<void> {
+  // Checked before connecting: there is no default any more.
+  if (!env.SEED_ADMIN_PASSWORD) {
+    throw new Error('Set SEED_ADMIN_PASSWORD (8+ characters) for the bootstrap admin before seeding.');
+  }
   await connectScriptDatabase();
 
   const categoryIds = new Map<string, string>();
@@ -166,6 +170,9 @@ async function seed(): Promise<void> {
   );
   logger.info(`Admin account ready: ${admin.email}`);
   logger.warn('Sign in with SEED_ADMIN_PASSWORD and change it immediately.');
+  logger.warn(
+    'Admin needs the address on ADMIN_EMAILS AND verified: in the app, Profile → Verify email (or use Forgot password once).',
+  );
 
   await disconnectDatabase();
   logger.info('Seed complete.');

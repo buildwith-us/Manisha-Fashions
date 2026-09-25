@@ -16,6 +16,15 @@ export interface IRefreshToken extends Document<Types.ObjectId> {
   userAgent?: string;
   expiresAt: Date;
   revokedAt?: Date;
+  /**
+   * Every token descended from one sign-in shares a family. Rotation hands the
+   * family on; replaying a token that was already rotated revokes the whole
+   * family (reuse detection). Absent on tokens issued before families existed,
+   * whose family is taken to be their own jti.
+   */
+  familyId?: string;
+  /** Set when this token was rotated: the jti that replaced it. */
+  replacedByJti?: string;
   createdAt: Date;
 }
 
@@ -28,6 +37,8 @@ const refreshTokenSchema = new Schema<IRefreshToken>(
     userAgent: { type: String },
     expiresAt: { type: Date, required: true },
     revokedAt: { type: Date },
+    familyId: { type: String, index: true },
+    replacedByJti: { type: String },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );

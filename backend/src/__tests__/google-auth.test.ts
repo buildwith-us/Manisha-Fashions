@@ -89,11 +89,12 @@ describe('POST /auth/google', () => {
     expect(await User.countDocuments()).toBe(1);
   });
 
-  it('links an existing email/password account instead of duplicating it', async () => {
+  it('links an existing VERIFIED email/password account and keeps its password', async () => {
     const registered = await request
       .post(api('/auth/register'))
       .send({ email: 'shopper@example.com', password: PASSWORD, name: 'Original Name' });
     expect(registered.status).toBe(200);
+    await User.updateOne({ email: 'shopper@example.com' }, { $set: { emailVerified: true } });
 
     googleIdentity();
     const res = await signInWithGoogle();
@@ -104,11 +105,43 @@ describe('POST /auth/google', () => {
     expect(res.body.data.user.authProviders.sort()).toEqual(['google', 'password']);
     expect(await User.countDocuments()).toBe(1);
 
-    // The password still works after linking.
+    // The owner proved the address before, so their password stays.
     const login = await request
       .post(api('/auth/login'))
       .send({ email: 'shopper@example.com', password: PASSWORD });
     expect(login.status).toBe(200);
+  });
+
+  /*
+    F10 — account pre-hijacking. Registration never proves the address, so an
+    attacker can register the victim's email with a password first. When the
+    real owner signs in with Google, that password must stop working and every
+    session the attacker holds must end.
+  */
+  it('removes the password and revokes sessions when linking an UNVERIFIED account', async () => {
+    const attacker = await request
+      .post(api('/auth/register'))
+      .send({ email: 'shopper@example.com', password: PASSWORD });
+    expect(attacker.body.data.user.emailVerified).toBe(false);
+
+    googleIdentity();
+    const res = await signInWithGoogle();
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.user.id).toBe(attacker.body.data.user.id);
+    expect(res.body.data.user.authProviders).toEqual(['google']);
+    expect(res.body.data.user.emailVerified).toBe(true);
+
+    const passwordLogin = await request
+      .post(api('/auth/login'))
+      .send({ email: 'shopper@example.com', password: PASSWORD });
+    expect(passwordLogin.status).toBe(401);
+    await request
+      .post(api('/auth/refresh'))
+      .send({ refreshToken: attacker.body.data.refreshToken })
+      .expect(401);
+    // The owner's fresh Google session is unaffected.
+    await request.post(api('/auth/refresh')).send({ refreshToken: res.body.data.refreshToken }).expect(200);
   });
 
   it('never changes wholesale status when linking', async () => {

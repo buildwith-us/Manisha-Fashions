@@ -85,7 +85,8 @@ const envSchema = z.object({
   // Phone+OTP login was removed, so the first admin needs an email credential
   // or the admin panel is unreachable on a fresh database.
   SEED_ADMIN_EMAIL: z.string().email().default('admin@manishafashions.in'),
-  SEED_ADMIN_PASSWORD: z.string().min(8).default('ChangeMe123'),
+  /** No default: the seed script refuses to run without one (scripts/seed.ts). */
+  SEED_ADMIN_PASSWORD: blankable(z.string().min(8, 'SEED_ADMIN_PASSWORD must be at least 8 characters').optional()),
 
   // ── Google Sign-In ──
   /**
@@ -148,6 +149,37 @@ export const emailConfigured = Boolean(env.SMTP_USER && env.SMTP_APP_PASSWORD);
 export const googleAuthConfigured = Boolean(env.GOOGLE_WEB_CLIENT_ID);
 
 /**
+ * Values that are public (in .env.example, in scripts, in tests) and so are
+ * no secret at all. A token signed with one of these can be forged by anyone
+ * who has read the repository.
+ */
+const KNOWN_WEAK_SECRETS = new Set([
+  'change-me-to-a-64-char-random-string',
+  'change-me-to-a-different-64-char-random-string',
+  'dev-only-access-secret-0123456789abcdef',
+  'dev-only-refresh-secret-0123456789abcdef',
+  'test-access-secret-at-least-16-chars',
+  'test-refresh-secret-at-least-16-chars',
+  'smoke-test-access-secret-value-0123456789',
+  'smoke-test-refresh-secret-value-0123456789',
+  'audit-test-access-secret-value-0123456789',
+  'audit-test-refresh-secret-value-0123456789',
+  'coverage-access-secret-value-0123456789',
+  'coverage-refresh-secret-value-0123456789',
+]);
+
+/** Why a JWT secret is unfit for production, or null if it is fine. */
+export function weakSecretReason(value: string): string | null {
+  if (value.length < 32) return 'must be at least 32 characters';
+  if (KNOWN_WEAK_SECRETS.has(value)) return 'is a published placeholder from this repository';
+  if (/change[-_ ]?me|placeholder|example|your[-_ ]?secret|^secret|password/i.test(value)) {
+    return 'looks like a placeholder';
+  }
+  if (new Set(value).size < 10) return 'is too repetitive to be random';
+  return null;
+}
+
+/**
  * Features that may run degraded in development but must never ship half-configured.
  *
  * Password reset without SMTP would silently drop the email while still
@@ -163,6 +195,20 @@ if (isProduction) {
     throw new Error(
       `Invalid environment configuration: ${missing.join(', ')} must be set in production.`,
     );
+  }
+
+  // Generate with: node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
+  const weak = (['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'] as const)
+    .map((name) => {
+      const reason = weakSecretReason(env[name]);
+      return reason ? `${name} ${reason}` : null;
+    })
+    .filter(Boolean);
+  if (env.JWT_ACCESS_SECRET === env.JWT_REFRESH_SECRET) {
+    weak.push('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be different');
+  }
+  if (weak.length > 0) {
+    throw new Error(`Invalid environment configuration: ${weak.join('; ')}.`);
   }
 }
 

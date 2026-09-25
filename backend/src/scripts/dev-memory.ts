@@ -18,6 +18,13 @@ async function main(): Promise<void> {
     process.env.JWT_ACCESS_SECRET ?? 'dev-only-access-secret-0123456789abcdef';
   process.env.JWT_REFRESH_SECRET =
     process.env.JWT_REFRESH_SECRET ?? 'dev-only-refresh-secret-0123456789abcdef';
+  // Throwaway in-memory data: a known password is fine here, and nowhere else.
+  process.env.SEED_ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'DevMemory123';
+  // The seeded admin keeps admin at sign-in only if listed (and verified, below).
+  const seedEmail = (process.env.SEED_ADMIN_EMAIL || 'admin@manishafashions.in').toLowerCase();
+  if (!(process.env.ADMIN_EMAILS ?? '').toLowerCase().split(',').map((e) => e.trim()).includes(seedEmail)) {
+    process.env.ADMIN_EMAILS = [process.env.ADMIN_EMAILS, seedEmail].filter(Boolean).join(',');
+  }
 
   const { createApp } = await import('../app');
   const { connectScriptDatabase } = await import('../config/database');
@@ -78,7 +85,8 @@ async function main(): Promise<void> {
     email: env.SEED_ADMIN_EMAIL,
     name: 'Store Admin',
     accountType: 'admin',
-    passwordHash: await hashPassword(env.SEED_ADMIN_PASSWORD),
+    emailVerified: true,
+    passwordHash: await hashPassword(env.SEED_ADMIN_PASSWORD as string),
     authProviders: ['password'],
   });
 

@@ -31,6 +31,7 @@ export function signAccessToken(user: Pick<IUser, '_id' | 'accountType' | 'whole
     tokenType: 'access',
   };
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, {
+    algorithm: 'HS256',
     expiresIn: env.JWT_ACCESS_TTL,
     issuer: 'manisha-fashions',
   } as SignOptions);
@@ -39,6 +40,8 @@ export function signAccessToken(user: Pick<IUser, '_id' | 'accountType' | 'whole
 export function verifyAccessToken(token: string): JwtAccessPayload {
   try {
     const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET, {
+      // Pinned: only the algorithm we sign with is accepted.
+      algorithms: ['HS256'],
       issuer: 'manisha-fashions',
     }) as JwtAccessPayload;
     if (decoded.tokenType !== 'access') {
@@ -58,10 +61,13 @@ export function verifyAccessToken(token: string): JwtAccessPayload {
 export async function issueTokens(
   user: IUser,
   context: { deviceId?: string; userAgent?: string } = {},
+  lineage: { familyId?: string; jti?: string } = {},
 ): Promise<IssuedTokens> {
   const accessToken = signAccessToken(user);
 
-  const jti = crypto.randomUUID();
+  const jti = lineage.jti ?? crypto.randomUUID();
+  // A sign-in starts a new family; a rotation continues its predecessor's.
+  const familyId = lineage.familyId ?? jti;
   const rawRefreshToken = crypto.randomBytes(48).toString('base64url');
   const refreshPayload: JwtRefreshPayload = {
     sub: user._id.toString(),
@@ -73,6 +79,7 @@ export async function issueTokens(
   // The jti travels in the payload; passing `jwtid` as well makes jsonwebtoken
   // throw on the duplicate claim.
   const refreshToken = jwt.sign(refreshPayload, env.JWT_REFRESH_SECRET, {
+    algorithm: 'HS256',
     expiresIn: `${env.JWT_REFRESH_TTL_DAYS}d`,
     issuer: 'manisha-fashions',
   } as SignOptions);
@@ -84,6 +91,7 @@ export async function issueTokens(
     userId: user._id,
     jti,
     tokenHash: hashRefreshToken(compositeRefresh),
+    familyId,
     deviceId: context.deviceId,
     userAgent: context.userAgent?.slice(0, 300),
     expiresAt,
@@ -101,6 +109,10 @@ export async function issueTokens(
  * Rotates a refresh token: the presented token is revoked and a fresh pair is
  * issued. Rotation means a stolen token is usable at most once before the
  * legitimate client's next refresh invalidates it.
+ *
+ * Reuse detection: presenting a token that was ALREADY rotated means two
+ * parties hold the same session (the thief and the owner). The whole family
+ * is revoked, so both are signed out and the owner signs in again.
  */
 export async function rotateRefreshToken(
   presentedToken: string,
@@ -113,6 +125,7 @@ export async function rotateRefreshToken(
   let payload: JwtRefreshPayload;
   try {
     payload = jwt.verify(jwtPart, env.JWT_REFRESH_SECRET, {
+      algorithms: ['HS256'],
       issuer: 'manisha-fashions',
     }) as JwtRefreshPayload;
   } catch {
@@ -128,25 +141,58 @@ export async function rotateRefreshToken(
     tokenHash: hashRefreshToken(presentedToken),
   });
 
-  if (!stored || stored.revokedAt || stored.expiresAt.getTime() <= Date.now()) {
+  if (!stored) {
+    throw ApiError.unauthorized('Session expired, please sign in again', 'REFRESH_TOKEN_INVALID');
+  }
+  const familyId = stored.familyId ?? stored.jti;
+
+  if (stored.revokedAt) {
+    if (stored.replacedByJti) await revokeFamily(familyId, 'reuse');
+    throw ApiError.unauthorized('Session expired, please sign in again', stored.replacedByJti ? 'REFRESH_TOKEN_REUSED' : 'REFRESH_TOKEN_INVALID');
+  }
+  if (stored.expiresAt.getTime() <= Date.now()) {
     throw ApiError.unauthorized('Session expired, please sign in again', 'REFRESH_TOKEN_INVALID');
   }
 
   const { User } = await import('../models/user.model');
   const user = await User.findById(stored.userId);
   if (!user || !user.isActive) {
+    // A deactivated account loses every session, not just this one.
+    if (user) await revokeAllSessions(user._id);
     throw ApiError.unauthorized('Account is no longer active', 'ACCOUNT_INACTIVE');
   }
 
-  stored.revokedAt = new Date();
-  await stored.save();
+  // Claimed atomically: of two requests rotating the same token at once, one
+  // wins and the other is treated as reuse.
+  const nextJti = crypto.randomUUID();
+  const claimed = await RefreshToken.findOneAndUpdate(
+    { _id: stored._id, revokedAt: { $exists: false } },
+    { $set: { revokedAt: new Date(), replacedByJti: nextJti } },
+  );
+  if (!claimed) {
+    await revokeFamily(familyId, 'reuse');
+    throw ApiError.unauthorized('Session expired, please sign in again', 'REFRESH_TOKEN_REUSED');
+  }
 
-  const tokens = await issueTokens(user, {
-    deviceId: context.deviceId ?? stored.deviceId,
-    userAgent: context.userAgent ?? stored.userAgent,
-  });
+  const tokens = await issueTokens(
+    user,
+    {
+      deviceId: context.deviceId ?? stored.deviceId,
+      userAgent: context.userAgent ?? stored.userAgent,
+    },
+    { familyId, jti: nextJti },
+  );
 
   return { tokens, userId: user._id };
+}
+
+async function revokeFamily(familyId: string, reason: 'reuse'): Promise<void> {
+  const { logger } = await import('../config/logger');
+  const result = await RefreshToken.updateMany(
+    { $or: [{ familyId }, { jti: familyId }], revokedAt: { $exists: false } },
+    { $set: { revokedAt: new Date() } },
+  );
+  logger.warn(`Refresh token ${reason} detected; revoked ${result.modifiedCount} session(s) in the family.`);
 }
 
 /** PRD 8.10 — logout invalidates the refresh token server-side, not just on-device. */

@@ -77,6 +77,11 @@ export async function refreshSession(
   const { tokens, userId } = await tokenService.rotateRefreshToken(refreshToken, context);
   const user = await User.findById(userId);
   if (!user) throw ApiError.unauthorized('Account not found', 'ACCOUNT_NOT_FOUND');
+  // rotateRefreshToken has already refused a deactivated account. The admin
+  // whitelist is re-applied here too, so an address taken off ADMIN_EMAILS
+  // loses admin at the next refresh — not only at the next full sign-in,
+  // which a 90-day refresh token could postpone for months.
+  if (syncAdminRole(user)) await user.save();
 
   return {
     user: serializeUser(user),
@@ -388,7 +393,7 @@ export async function loginWithGoogle(input: {
   let user = await User.findOne({ googleId: identity.googleId });
 
   if (!user) {
-    user = await User.findOne({ email: identity.email });
+    user = await User.findOne({ email: identity.email }).select('+passwordHash');
 
     if (user) {
       // The address already belongs to an account linked to a *different*
@@ -397,6 +402,15 @@ export async function loginWithGoogle(input: {
         throw ApiError.conflict(
           'This email is linked to a different Google account. Sign in with your password instead.',
         );
+      }
+      // Account pre-hijacking guard. Registration never proved the address,
+      // so a password set on an UNVERIFIED account may belong to someone who
+      // registered the victim's email first. Google has now proved who owns
+      // it: that password is removed and every existing session revoked.
+      if (!user.emailVerified && user.passwordHash) {
+        user.passwordHash = undefined;
+        user.authProviders = user.authProviders.filter((provider) => provider !== 'password');
+        await tokenService.revokeAllSessions(user._id);
       }
       // Existing password (or OTP) account — attach the Google credential.
       // Google has verified this exact address (email_verified is required).
