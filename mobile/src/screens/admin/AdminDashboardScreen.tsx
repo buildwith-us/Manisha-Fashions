@@ -138,6 +138,27 @@ export function AdminDashboardScreen() {
             emphasis={lowStock.length > 0}
             onPress={() => navigation.navigate('AdminTabs', { screen: 'Manage' })}
           />
+          {summary?.pendingPaymentOverHour !== undefined ? (
+            <StatCard
+              label="Awaiting payment"
+              value={String(summary.pendingPaymentOverHour)}
+              footnote="Online orders unpaid over 1 hour"
+              tone={summary.pendingPaymentOverHour > 0 ? 'accent' : 'default'}
+              emphasis={summary.pendingPaymentOverHour > 0}
+              onPress={() => navigation.navigate('AdminTabs', { screen: 'AdminOrders' })}
+            />
+          ) : null}
+          {summary?.refundsDue !== undefined ? (
+            <StatCard
+              label="Refunds due"
+              value={String(summary.refundsDue)}
+              footnote={summary.refundsDue > 0 ? 'Cancelled after payment' : 'Nothing owed'}
+              footnoteTone={summary.refundsDue > 0 ? 'accent' : 'muted'}
+              tone={summary.refundsDue > 0 ? 'accent' : 'default'}
+              emphasis={summary.refundsDue > 0}
+              onPress={() => navigation.navigate('AdminTabs', { screen: 'AdminOrders' })}
+            />
+          ) : null}
         </View>
 
         <View style={styles.block}>

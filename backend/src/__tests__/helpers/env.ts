@@ -46,7 +46,22 @@ process.env.PASSWORD_RESET_MAX_ATTEMPTS = '5';
 process.env.PASSWORD_RESET_LOCKOUT_MINUTES = '10';
 process.env.FORGOT_PASSWORD_MAX_PER_HOUR = '3';
 
-// Left unset so email.service falls back to logging the code instead of
-// dialling Gmail: the suite must never touch the network.
-delete process.env.SMTP_USER;
-delete process.env.SMTP_APP_PASSWORD;
+// Third-party credentials are BLANKED, not deleted. config/env.ts runs dotenv,
+// which fills in any variable that is absent — `delete` let the real values in
+// backend/.env back in, so a test could send real email or upload to the real
+// Cloudinary account (one upload test did, before this). dotenv never
+// overrides a variable that is set, even to '', and the schema reads '' as
+// unset. The suite must never touch a real service.
+for (const name of [
+  'SMTP_USER',
+  'SMTP_APP_PASSWORD',
+  'CLOUDINARY_CLOUD_NAME',
+  'CLOUDINARY_API_KEY',
+  'CLOUDINARY_API_SECRET',
+  'RAZORPAY_KEY_ID',
+  'RAZORPAY_KEY_SECRET',
+  'RAZORPAY_WEBHOOK_SECRET',
+  'SENTRY_DSN',
+]) {
+  process.env[name] = '';
+}

@@ -1,22 +1,15 @@
+import { KvEntry } from '../models/kvEntry.model';
 import { logger } from './logger';
 
 /**
- * Key-value store for password-reset attempt counters and rate limits
- * (PRD 2 / 8.11). Login OTPs were removed with phone sign-in.
+ * Key-value store for password-reset and email-code quotas, attempt counters
+ * and lockouts (PRD 2 / 8.11).
  *
- * Redis was removed from this project, so the store is in-process. Two
- * consequences worth knowing, because they are behavioural, not cosmetic:
- *
- *   1. State does not survive a restart. A reset code's attempt count and
- *      lockout are cleared by a deploy or an idle spin-down.
- *   2. State is not shared between instances. This is correct for a single
- *      instance only; running two would give each its own rate-limit state,
- *      letting a client bypass limits by landing on the other one.
- *
- * If the service is ever scaled past one instance, this must go back to a
- * shared store. The `KeyValueStore` interface is the seam for that: implement
- * it against Redis (or similar) and return it from `initStore`, and no caller
- * changes.
+ * Backed by MongoDB (the `kventries` collection), so this state survives a
+ * restart or an idle spin-down and is shared by every instance: a lockout
+ * cannot be escaped by waiting for a deploy, or by landing on another
+ * instance. Rate-limit windows live in their own collection — see
+ * middleware/rateLimiter.ts.
  */
 export interface KeyValueStore {
   get(key: string): Promise<string | null>;
@@ -27,50 +20,61 @@ export interface KeyValueStore {
   ttl(key: string): Promise<number>;
 }
 
-class MemoryStore implements KeyValueStore {
-  private readonly entries = new Map<string, { value: string; expiresAt: number | null }>();
+/** A row counts only while unexpired; the TTL reaper is merely cleanup. */
+const live = (now: Date) => ({ $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] });
 
-  private read(key: string): string | null {
-    const entry = this.entries.get(key);
-    if (!entry) return null;
-    if (entry.expiresAt !== null && entry.expiresAt <= Date.now()) {
-      this.entries.delete(key);
-      return null;
-    }
-    return entry.value;
-  }
-
+class MongoStore implements KeyValueStore {
   async get(key: string) {
-    return this.read(key);
+    const entry = await KvEntry.findOne({ _id: key, ...live(new Date()) }).lean();
+    return entry?.value ?? null;
   }
 
   async set(key: string, value: string, ttlSeconds?: number) {
-    this.entries.set(key, {
-      value,
-      expiresAt: ttlSeconds ? Date.now() + ttlSeconds * 1000 : null,
-    });
+    const expiresAt = ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000) : null;
+    await KvEntry.updateOne({ _id: key }, { $set: { value, expiresAt } }, { upsert: true });
   }
 
   async del(key: string) {
-    this.entries.delete(key);
+    await KvEntry.deleteOne({ _id: key });
   }
 
+  /**
+   * Atomic in one round trip: an expired row restarts from 1 (and loses its
+   * expiry), a live one is incremented and keeps its expiry, a missing one is
+   * created at 1 — exactly the Redis INCR semantics the callers expect.
+   */
   async incr(key: string) {
-    const current = Number(this.read(key) ?? 0) + 1;
-    const existing = this.entries.get(key);
-    this.entries.set(key, { value: String(current), expiresAt: existing?.expiresAt ?? null });
-    return current;
+    const now = new Date();
+    const expired = {
+      $and: [{ $eq: [{ $type: '$expiresAt' }, 'date'] }, { $lte: ['$expiresAt', now] }],
+    };
+    const entry = await KvEntry.findOneAndUpdate(
+      { _id: key },
+      [
+        {
+          $set: {
+            value: {
+              $toString: {
+                $add: [{ $cond: [expired, 0, { $toInt: { $ifNull: ['$value', '0'] } }] }, 1],
+              },
+            },
+            expiresAt: { $cond: [expired, null, { $ifNull: ['$expiresAt', null] }] },
+          },
+        },
+      ],
+      { upsert: true, new: true },
+    ).lean();
+    return Number(entry?.value ?? 1);
   }
 
   async expire(key: string, ttlSeconds: number) {
-    const entry = this.entries.get(key);
-    if (entry) entry.expiresAt = Date.now() + ttlSeconds * 1000;
+    await KvEntry.updateOne({ _id: key }, { $set: { expiresAt: new Date(Date.now() + ttlSeconds * 1000) } });
   }
 
   async ttl(key: string) {
-    const entry = this.entries.get(key);
-    if (!entry || entry.expiresAt === null) return -1;
-    return Math.max(0, Math.ceil((entry.expiresAt - Date.now()) / 1000));
+    const entry = await KvEntry.findOne({ _id: key, ...live(new Date()) }).lean();
+    if (!entry || !entry.expiresAt) return -1;
+    return Math.max(0, Math.ceil((entry.expiresAt.getTime() - Date.now()) / 1000));
   }
 }
 
@@ -78,8 +82,8 @@ let store: KeyValueStore | null = null;
 
 export function initStore(): KeyValueStore {
   if (store) return store;
-  logger.info('Key-value store: in-process (rate-limit state resets on restart).');
-  store = new MemoryStore();
+  logger.info('Key-value store: MongoDB (quotas and lockouts survive restarts).');
+  store = new MongoStore();
   return store;
 }
 

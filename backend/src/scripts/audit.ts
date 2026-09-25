@@ -33,6 +33,26 @@ async function main(): Promise<void> {
 
   process.env.NODE_ENV = 'development';
   process.env.MONGODB_URI = mongod.getUri('manisha_audit');
+  // ADMIN_EMAILS grants admin only to a listed AND verified address, and is
+  // re-applied at every sign-in — so the admin this run promotes must be both,
+  // or the next login demotes it. Fixed here, before config/env.ts is read.
+  const RUN_ADMIN_EMAIL = `run-admin.${Date.now()}@example.test`;
+  process.env.ADMIN_EMAILS = RUN_ADMIN_EMAIL;
+  // A script run never touches real third-party services. Blank, not deleted:
+  // dotenv would refill a deleted variable from backend/.env.
+  for (const name of [
+    'SMTP_USER',
+    'SMTP_APP_PASSWORD',
+    'CLOUDINARY_CLOUD_NAME',
+    'CLOUDINARY_API_KEY',
+    'CLOUDINARY_API_SECRET',
+    'RAZORPAY_KEY_ID',
+    'RAZORPAY_KEY_SECRET',
+    'RAZORPAY_WEBHOOK_SECRET',
+    'SENTRY_DSN',
+  ]) {
+    process.env[name] = '';
+  }
   process.env.PORT = '4601';
   process.env.API_PREFIX = '/api/v1';
   process.env.JWT_ACCESS_SECRET = 'audit-test-access-secret-value-0123456789';
@@ -118,8 +138,11 @@ async function main(): Promise<void> {
   try {
     /* ── Set up an admin and a retail customer ────────────────────────── */
     const adminSeed = await login('admin');
-    await User.updateOne({ email: adminSeed.email }, { $set: { accountType: 'admin' } });
-    const adminSession = await reLogin(adminSeed.email, adminSeed.password);
+    await User.updateOne(
+      { email: adminSeed.email },
+      { $set: { accountType: 'admin', email: RUN_ADMIN_EMAIL, emailVerified: true } },
+    );
+    const adminSession = await reLogin(RUN_ADMIN_EMAIL, adminSeed.password);
     const adminToken = adminSession.accessToken;
 
     const retail = await login('user9812300001');
@@ -304,13 +327,19 @@ async function main(): Promise<void> {
     });
     check('profile can be updated', prof.status === 200, prof.body);
     check('name persisted', prof.body.data?.name === 'Audit Customer', prof.body.data);
-    check('email persisted', prof.body.data?.email === 'audit@example.com', prof.body.data);
+    // Email is a verified credential now: PATCH /auth/me ignores it (it
+    // changes only through /auth/email/request-code → confirm).
+    check('email is NOT changed by a profile update', prof.body.data?.email === retail.email, prof.body.data);
 
-    const badEmail = await call('PATCH', '/auth/me', {
+    const emailOnly = await call('PATCH', '/auth/me', {
       token: retailToken,
       body: { email: 'not-an-email' },
     });
-    check('a malformed email is rejected', badEmail.status === 422, badEmail.body);
+    check(
+      'an email-only profile update changes nothing',
+      emailOnly.status === 200 && emailOnly.body.data?.email === retail.email,
+      emailOnly.body,
+    );
 
     /* ── Admin: users (AdminUsersScreen) ───────────────────────────────── */
     section('Admin user management');
@@ -319,11 +348,13 @@ async function main(): Promise<void> {
     check('user list is an array', Array.isArray(users.body.data), users.body.data);
     check('user list is paginated', typeof users.body.meta?.total === 'number', users.body.meta);
 
-    const userSearch = await call('GET', '/admin/users?search=9812300001', { token: adminToken });
-    check('admin can search users by phone', userSearch.status === 200, userSearch.body);
+    // Accounts are email-based now (no phone at signup); the admin search
+    // covers name, phone and business name, so search by the name set above.
+    const userSearch = await call('GET', '/admin/users?search=Audit%20Customer', { token: adminToken });
+    check('admin can search users', userSearch.status === 200, userSearch.body);
     check(
       'search finds the retail customer',
-      (userSearch.body.data ?? []).some((u: any) => u.phone?.includes('9812300001')),
+      (userSearch.body.data ?? []).some((u: any) => u.email === retail.email),
       userSearch.body.data,
     );
 
@@ -383,7 +414,7 @@ async function main(): Promise<void> {
     check('admin can list pending applications', wsList.status === 200, wsList.body);
     check(
       'the pending applicant appears',
-      (wsList.body.data ?? []).some((u: any) => u.phone?.includes('9812300055')),
+      (wsList.body.data ?? []).some((u: any) => u.id === ws.user.id),
       wsList.body.data,
     );
 
@@ -394,7 +425,8 @@ async function main(): Promise<void> {
     check('admin can approve an application', approve.status === 200, approve.body);
     check('status becomes approved', approve.body.data?.wholesaleStatus === 'approved', approve.body.data);
 
-    const wsSession = await login('user9812300055', 'wholesale');
+    // Sign the approved applicant back in (login() would register a new one).
+    const wsSession = await reLogin(ws.email, ws.password);
     const wsProducts = await call('GET', '/products', { token: wsSession.accessToken });
     check('an approved wholesaler can browse', wsProducts.status === 200, wsProducts.body);
     check(
@@ -511,7 +543,7 @@ async function main(): Promise<void> {
     await login('user9812300077');
     const staffSeed = await login('staff');
     await User.updateOne({ email: staffSeed.email }, { $set: { accountType: 'staff' } });
-    const staff = await login('user9812300077');
+    const staff = await reLogin(staffSeed.email, staffSeed.password);
 
     const staffPrice = await call('PATCH', `/products/${p1Id}`, {
       token: staff.accessToken,
@@ -580,7 +612,7 @@ async function main(): Promise<void> {
       token: adminToken,
       body: { decision: 'approved' },
     });
-    const tradeSession = await login('user9812300088', 'wholesale');
+    const tradeSession = await reLogin(trade.email, trade.password);
 
     const guestNames = await namesFor();
     check('guest sees the "both" product', guestNames.includes('Visibility Both'), guestNames);
@@ -641,9 +673,11 @@ async function main(): Promise<void> {
     );
 
     // Switching a product between storefronts takes effect immediately.
+    // Opening a trade-only product to retail needs its retail price, set
+    // explicitly — a trade-only product has none, and none is derived.
     await call('PATCH', `/products/${tradeOnlyId}`, {
       token: adminToken,
-      body: { visibility: 'both' },
+      body: { visibility: 'both', retailPrice: 300000 },
     });
     const afterSwitch = await namesFor(buyerToken);
     check(

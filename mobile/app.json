@@ -53,7 +53,8 @@
       "googleWebClientId": "67294830837-9bhighane46vmsq6hhqphsn7i8mta3ad.apps.googleusercontent.com",
       "eas": {
         "projectId": "0f41f5cb-2a39-4f88-86ca-eb84b9ab17a2"
-      }
+      },
+      "sentryDsn": ""
     }
   }
 }

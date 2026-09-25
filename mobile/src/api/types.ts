@@ -200,6 +200,10 @@ export interface DashboardSummary {
   lowStockThreshold: number;
   lowStockProducts: Product[];
   ordersByStatus: Partial<Record<OrderStatus, number>>;
+  /** Online orders still unpaid after an hour. Absent on an older server. */
+  pendingPaymentOverHour?: number;
+  /** Cancelled paid orders whose refund is not sent (or failed). */
+  refundsDue?: number;
 }
 
 export interface ProductRating {

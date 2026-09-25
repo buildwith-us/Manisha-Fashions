@@ -7,9 +7,21 @@ import { ConnectionBanner } from './src/components/ConnectionBanner';
 import { store } from './src/store';
 import { bootstrapSession } from './src/store/slices/authSlice';
 import { configureGoogle } from './src/services/googleAuth';
+import { initMonitoring, setMonitoringUser } from './src/services/monitoring';
 
-// Once, before anything can ask for a sign-in.
+// Error reporting first (a no-op without a DSN), then Google sign-in.
+initMonitoring();
 configureGoogle();
+
+// Error reports carry the signed-in account's id — never its email or name.
+let reportedUserId: string | null = null;
+store.subscribe(() => {
+  const id = store.getState().auth.user?.id ?? null;
+  if (id !== reportedUserId) {
+    reportedUserId = id;
+    setMonitoringUser(id);
+  }
+});
 
 function AppBootstrap() {
   useEffect(() => {

@@ -193,7 +193,7 @@ describe('POST /auth/google', () => {
 });
 
 describe('password login on a Google-only account', () => {
-  it('explains that the account uses Google Sign-In', async () => {
+  it('gives the same generic error as any failed login (no enumeration), with a Google hint for everyone', async () => {
     googleIdentity();
     await signInWithGoogle();
 
@@ -202,9 +202,9 @@ describe('password login on a Google-only account', () => {
       .send({ email: 'shopper@example.com', password: PASSWORD });
 
     expect(res.status).toBe(401);
-    expect(res.body.error.code).toBe('GOOGLE_ACCOUNT_NO_PASSWORD');
+    expect(res.body.error.code).toBe('INVALID_CREDENTIALS');
     expect(res.body.error.message).toBe(
-      'This account uses Google Sign-In. Continue with Google, or reset your password to set one.',
+      'Incorrect email or password. If you signed up with Google, use "Continue with Google".',
     );
   });
 

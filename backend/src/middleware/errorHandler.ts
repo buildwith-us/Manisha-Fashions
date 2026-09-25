@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { isProduction } from '../config/env';
 import { logger } from '../config/logger';
+import { reportError } from '../config/monitoring';
 import { ApiError } from '../utils/ApiError';
 
 export function notFoundHandler(req: Request, _res: Response, next: NextFunction): void {
@@ -22,6 +23,18 @@ export function errorHandler(
 
   if (error instanceof ApiError) {
     apiError = error;
+  } else if (isMulterError(error)) {
+    // Upload limits (size, count, field) are the client's to fix.
+    apiError =
+      error.code === 'LIMIT_FILE_SIZE'
+        ? new ApiError(413, 'Each image must be 8 MB or smaller.', 'FILE_TOO_LARGE')
+        : new ApiError(400, error.message || 'The upload was not accepted.', 'UPLOAD_REJECTED');
+  } else if (isBodyParserError(error)) {
+    // The client sent something unreadable: its mistake, not a server fault.
+    apiError =
+      error.type === 'entity.too.large'
+        ? new ApiError(413, 'The request body is too large.', 'PAYLOAD_TOO_LARGE')
+        : new ApiError(400, 'The request body is not valid JSON.', 'MALFORMED_BODY');
   } else if (error instanceof mongoose.Error.ValidationError) {
     apiError = new ApiError(
       422,
@@ -43,6 +56,7 @@ export function errorHandler(
 
   if (apiError.statusCode >= 500) {
     logger.error(`${req.method} ${req.originalUrl} → ${apiError.statusCode}`, error);
+    reportError(error, { route: `${req.method} ${req.route?.path ?? req.path}`, userId: req.user?.id });
   } else {
     logger.warn(`${req.method} ${req.originalUrl} → ${apiError.statusCode} ${apiError.code}`);
   }
@@ -59,6 +73,17 @@ export function errorHandler(
         : {}),
     },
   });
+}
+
+function isMulterError(error: unknown): error is { code: string; message: string } {
+  return typeof error === 'object' && error !== null && (error as { name?: unknown }).name === 'MulterError';
+}
+
+/** body-parser marks its errors with a `type` and a 4xx `status`. */
+function isBodyParserError(error: unknown): error is { type: string; status: number } {
+  if (typeof error !== 'object' || error === null) return false;
+  const { type, status } = error as { type?: unknown; status?: unknown };
+  return typeof type === 'string' && type.startsWith('entity.') && typeof status === 'number' && status < 500;
 }
 
 function isDuplicateKeyError(

@@ -348,20 +348,15 @@ export async function loginWithPassword(input: {
   // when there is no account or no hash to compare against.
   const matches = await passwordService.verifyPassword(password, user?.passwordHash ?? DUMMY_HASH);
 
-  // A Google-created account has no password until one is set through the
-  // reset flow. Saying so is friendlier than "incorrect password", at the cost
-  // of revealing that this address has a Google account here.
-  if (user && !user.passwordHash && user.googleId) {
-    throw ApiError.unauthorized(
-      'This account uses Google Sign-In. Continue with Google, or reset your password to set one.',
-      'GOOGLE_ACCOUNT_NO_PASSWORD',
-    );
-  }
-
-  // One message for everything else — wrong password, no such account, or an
-  // OTP-only account.
+  // One message for every failure — wrong password, no such account, or an
+  // account with no password (Google-only, OTP-only). A distinct message for
+  // Google-only accounts used to reveal which addresses had one. The hint is
+  // generic, so it is shown to everyone and reveals nothing.
   if (!user || !user.passwordHash || !matches) {
-    throw ApiError.unauthorized('Incorrect email or password.', 'INVALID_CREDENTIALS');
+    throw ApiError.unauthorized(
+      'Incorrect email or password. If you signed up with Google, use "Continue with Google".',
+      'INVALID_CREDENTIALS',
+    );
   }
 
   if (!user.isActive) {
@@ -480,10 +475,15 @@ export async function requestPasswordReset(input: {
   }
 
   const user = await User.findOne({ email });
+
+  // The same bcrypt work happens for every address, so response time does not
+  // reveal which ones are registered (an unknown address used to answer ~50 ms
+  // sooner). Mail is sent without awaiting SMTP, for the same reason.
+  const otp = await passwordService.createResetOtp();
+
   // Silent no-op for unknown addresses: the controller still returns success.
   if (!user || !user.isActive) return;
 
-  const otp = await passwordService.createResetOtp();
   user.passwordResetOtpHash = otp.codeHash;
   user.passwordResetOtpExpiresAt = otp.expiresAt;
   // A fresh code invalidates any token already minted from an older one.
@@ -494,11 +494,15 @@ export async function requestPasswordReset(input: {
   // A new code clears the previous lockout counter for this address.
   await store.del(OTP_ATTEMPT_KEY(email));
 
-  await emailService.sendPasswordResetEmail({
-    to: email,
-    code: otp.code,
-    expiresInMinutes: env.PASSWORD_RESET_OTP_TTL_MINUTES,
-  });
+  // Not awaited: a slow Gmail round trip would otherwise mark this address as
+  // registered. The send already logs its own failures and never throws.
+  void emailService
+    .sendPasswordResetEmail({
+      to: email,
+      code: otp.code,
+      expiresInMinutes: env.PASSWORD_RESET_OTP_TTL_MINUTES,
+    })
+    .catch(() => undefined);
 }
 
 const OTP_ATTEMPT_KEY = (email: string) => `pwreset:attempts:${email}`;

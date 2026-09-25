@@ -35,14 +35,14 @@ const envSchema = z.object({
   JWT_ACCESS_TTL: z.string().default('30m'),
   JWT_REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(90),
 
-  CLOUDINARY_CLOUD_NAME: z.string().optional(),
-  CLOUDINARY_API_KEY: z.string().optional(),
-  CLOUDINARY_API_SECRET: z.string().optional(),
+  CLOUDINARY_CLOUD_NAME: blankable(z.string().optional()),
+  CLOUDINARY_API_KEY: blankable(z.string().optional()),
+  CLOUDINARY_API_SECRET: blankable(z.string().optional()),
   CLOUDINARY_FOLDER: z.string().default('manisha-fashions/products'),
 
-  RAZORPAY_KEY_ID: z.string().optional(),
-  RAZORPAY_KEY_SECRET: z.string().optional(),
-  RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+  RAZORPAY_KEY_ID: blankable(z.string().optional()),
+  RAZORPAY_KEY_SECRET: blankable(z.string().optional()),
+  RAZORPAY_WEBHOOK_SECRET: blankable(z.string().optional()),
 
   /**
    * The COD fallback, in paise, for a state with no CodStateConfig row.
@@ -122,6 +122,11 @@ const envSchema = z.object({
   PASSWORD_RESET_LOCKOUT_MINUTES: z.coerce.number().int().positive().default(10),
   /** Per email *and* per IP, enforced in the reset service (PRD 8.11). */
   FORGOT_PASSWORD_MAX_PER_HOUR: z.coerce.number().int().positive().default(3),
+
+  // ── Error reporting ──
+  /** Sentry DSN. Unset = reporting off. */
+  SENTRY_DSN: blankable(z.string().url().optional()),
+  SENTRY_ENVIRONMENT: blankable(z.string().optional()),
 
   // ── Online payments left unfinished ──
   /** An unpaid online order is expired, and its stock released, after this long. */

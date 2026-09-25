@@ -36,14 +36,16 @@ export function createApp(): Application {
   app.use(helmet());
   app.use(
     cors({
-      // CORS is locked to known origins; the mobile app sends no Origin header,
-      // so an empty allow-list still serves the app but blocks browsers.
+      // The mobile app sends no Origin header and is always served. Browser
+      // origins must be on CORS_ORIGINS; an EMPTY list denies every browser
+      // origin in production (it used to allow all), and allows all only in
+      // development for convenience. A refused origin gets no CORS headers —
+      // the browser blocks it — rather than a 500.
       origin(origin, callback) {
-        if (!origin || env.CORS_ORIGINS.length === 0 || env.CORS_ORIGINS.includes(origin)) {
-          callback(null, true);
-          return;
-        }
-        callback(new Error('Not allowed by CORS'));
+        if (!origin) return callback(null, true);
+        if (env.CORS_ORIGINS.includes(origin)) return callback(null, true);
+        if (env.CORS_ORIGINS.length === 0 && !isProduction) return callback(null, true);
+        return callback(null, false);
       },
       credentials: true,
     }),

@@ -43,6 +43,26 @@ async function main(): Promise<void> {
   // Set the environment before anything imports config/env.ts.
   process.env.NODE_ENV = 'development';
   process.env.MONGODB_URI = mongod.getUri('manisha_smoke');
+  // ADMIN_EMAILS grants admin only to a listed AND verified address, and is
+  // re-applied at every sign-in — so the admin this run promotes must be both,
+  // or the next login demotes it. Fixed here, before config/env.ts is read.
+  const RUN_ADMIN_EMAIL = `run-admin.${Date.now()}@example.test`;
+  process.env.ADMIN_EMAILS = RUN_ADMIN_EMAIL;
+  // A script run never touches real third-party services. Blank, not deleted:
+  // dotenv would refill a deleted variable from backend/.env.
+  for (const name of [
+    'SMTP_USER',
+    'SMTP_APP_PASSWORD',
+    'CLOUDINARY_CLOUD_NAME',
+    'CLOUDINARY_API_KEY',
+    'CLOUDINARY_API_SECRET',
+    'RAZORPAY_KEY_ID',
+    'RAZORPAY_KEY_SECRET',
+    'RAZORPAY_WEBHOOK_SECRET',
+    'SENTRY_DSN',
+  ]) {
+    process.env[name] = '';
+  }
   process.env.PORT = '4599';
   process.env.API_PREFIX = '/api/v1';
   process.env.JWT_ACCESS_SECRET = 'smoke-test-access-secret-value-0123456789';
@@ -164,8 +184,11 @@ async function main(): Promise<void> {
     section('Catalog & price visibility (PRD 4.2 / 8.4)');
 
     const adminSeed = await login('admin');
-    await User.updateOne({ email: adminSeed.email }, { $set: { accountType: 'admin' } });
-    const admin = await reLogin(adminSeed.email, adminSeed.password);
+    await User.updateOne(
+      { email: adminSeed.email },
+      { $set: { accountType: 'admin', email: RUN_ADMIN_EMAIL, emailVerified: true } },
+    );
+    const admin = await reLogin(RUN_ADMIN_EMAIL, adminSeed.password);
     check('admin routed by accountType', admin.user.accountType === 'admin', admin.user);
 
     const categoryResponse = await call('POST', '/products/categories', {
@@ -269,7 +292,9 @@ async function main(): Promise<void> {
 
     const staffSeed = await login('staff');
     await User.updateOne({ email: staffSeed.email }, { $set: { accountType: 'staff' } });
-    const staff = await login('user9812345673');
+    // Sign back in as the promoted account (this used to create a brand-new
+    // customer instead, so every "staff" check below ran as a customer).
+    const staff = await reLogin(staffSeed.email, staffSeed.password);
     check('staff account type resolved', staff.user.accountType === 'staff', staff.user);
 
     const staffPriceChange = await call('PATCH', `/products/${productId}`, {

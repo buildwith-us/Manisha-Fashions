@@ -18,6 +18,7 @@ import {
   updateProductSchema,
 } from '../validators/catalog.validator';
 import { PERMISSIONS } from '../utils/rbac';
+import { ApiError } from '../utils/ApiError';
 
 const router = Router();
 
@@ -27,7 +28,8 @@ const upload = multer({
   limits: { fileSize: 8 * 1024 * 1024, files: 10 },
   fileFilter: (_req, file, callback) => {
     if (!/^image\/(jpe?g|png|webp|avif)$/.test(file.mimetype)) {
-      callback(new Error('Only JPEG, PNG, WebP or AVIF images are allowed'));
+      // An ApiError, so the client gets a 415 rather than a generic 500.
+      callback(new ApiError(415, 'Only JPEG, PNG, WebP or AVIF images are allowed', 'UNSUPPORTED_MEDIA_TYPE'));
       return;
     }
     callback(null, true);

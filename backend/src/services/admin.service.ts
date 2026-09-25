@@ -37,6 +37,8 @@ export async function getDashboard(viewer: AuthenticatedUser) {
     lowStock,
     totalProducts,
     ordersByStatus,
+    pendingPaymentOverHour,
+    refundsDue,
   ] = await Promise.all([
     Order.countDocuments({ createdAt: { $gte: startOfDay } }),
     Order.aggregate<{ _id: null; total: number }>([
@@ -54,6 +56,20 @@ export async function getDashboard(viewer: AuthenticatedUser) {
     Order.aggregate<{ _id: string; count: number }>([
       { $group: { _id: '$orderStatus', count: { $sum: 1 } } },
     ]),
+    // Online checkouts still unpaid after an hour: abandoned, or a payment
+    // whose confirmation never arrived. The expiry sweep cancels them at
+    // PENDING_PAYMENT_TTL_MINUTES; a number here that stays up means it is not.
+    Order.countDocuments({
+      paymentMethod: 'razorpay',
+      paymentStatus: 'pending',
+      createdAt: { $lt: new Date(Date.now() - 60 * 60 * 1000) },
+    }),
+    // Money owed back: cancelled after payment with no refund, or a failed one.
+    Order.countDocuments({
+      paymentStatus: 'paid',
+      orderStatus: 'cancelled',
+      $or: [{ 'refund.status': { $exists: false } }, { 'refund.status': 'failed' }],
+    }),
   ]);
 
   return {
@@ -64,6 +80,8 @@ export async function getDashboard(viewer: AuthenticatedUser) {
     lowStockThreshold: LOW_STOCK_THRESHOLD,
     lowStockProducts: serializeProducts(lowStock, viewer),
     ordersByStatus: Object.fromEntries(ordersByStatus.map((row) => [row._id, row.count])),
+    pendingPaymentOverHour,
+    refundsDue,
   };
 }
 

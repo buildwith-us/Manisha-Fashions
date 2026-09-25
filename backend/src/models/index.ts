@@ -2,8 +2,10 @@ import type { Model } from 'mongoose';
 import { Cart } from './cart.model';
 import { Category } from './category.model';
 import { CodStateConfig } from './codStateConfig.model';
+import { KvEntry } from './kvEntry.model';
 import { Order } from './order.model';
 import { Product } from './product.model';
+import { RateLimitHit } from './rateLimitHit.model';
 import { RefreshToken } from './refreshToken.model';
 import { Review } from './review.model';
 import { User } from './user.model';
@@ -25,4 +27,6 @@ export const ALL_MODELS: Array<Model<any>> = [
   Review,
   RefreshToken,
   CodStateConfig,
+  KvEntry,
+  RateLimitHit,
 ];

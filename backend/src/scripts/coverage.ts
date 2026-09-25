@@ -45,6 +45,26 @@ async function main(): Promise<void> {
 
   process.env.NODE_ENV = 'development';
   process.env.MONGODB_URI = mongod.getUri('manisha_coverage');
+  // ADMIN_EMAILS grants admin only to a listed AND verified address, and is
+  // re-applied at every sign-in — so the admin this run promotes must be both,
+  // or the next login demotes it. Fixed here, before config/env.ts is read.
+  const RUN_ADMIN_EMAIL = `run-admin.${Date.now()}@example.test`;
+  process.env.ADMIN_EMAILS = RUN_ADMIN_EMAIL;
+  // A script run never touches real third-party services. Blank, not deleted:
+  // dotenv would refill a deleted variable from backend/.env.
+  for (const name of [
+    'SMTP_USER',
+    'SMTP_APP_PASSWORD',
+    'CLOUDINARY_CLOUD_NAME',
+    'CLOUDINARY_API_KEY',
+    'CLOUDINARY_API_SECRET',
+    'RAZORPAY_KEY_ID',
+    'RAZORPAY_KEY_SECRET',
+    'RAZORPAY_WEBHOOK_SECRET',
+    'SENTRY_DSN',
+  ]) {
+    process.env[name] = '';
+  }
   process.env.PORT = '4603';
   process.env.API_PREFIX = '/api/v1';
   process.env.JWT_ACCESS_SECRET = 'coverage-access-secret-value-0123456789';
@@ -153,8 +173,11 @@ async function main(): Promise<void> {
   try {
     /* ── Actors — each concern gets its own user so no call poisons another ─ */
     const adminSeed = await login('admin');
-    await User.updateOne({ email: adminSeed.email }, { $set: { accountType: 'admin' } });
-    const admin = await reLogin(adminSeed.email, adminSeed.password);
+    await User.updateOne(
+      { email: adminSeed.email },
+      { $set: { accountType: 'admin', email: RUN_ADMIN_EMAIL, emailVerified: true } },
+    );
+    const admin = await reLogin(RUN_ADMIN_EMAIL, adminSeed.password);
     const adminToken = admin.accessToken;
 
     // Shopper: cart, wishlist, orders, addresses, profile. Never role-changed,

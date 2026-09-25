@@ -2,11 +2,13 @@ import { createApp } from './app';
 import { connectDatabase, disconnectDatabase } from './config/database';
 import { env } from './config/env';
 import { logger } from './config/logger';
+import { initMonitoring, reportError } from './config/monitoring';
 import { disconnectStore, initStore } from './config/store';
 import { checkRazorpayConfig } from './services/payment.service';
 import { startPendingPaymentSweep, stopPendingPaymentSweep } from './services/order.service';
 
 async function bootstrap(): Promise<void> {
+  initMonitoring();
   initStore();
   await connectDatabase();
 
@@ -38,6 +40,7 @@ async function bootstrap(): Promise<void> {
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('unhandledRejection', (reason) => {
     logger.error('Unhandled promise rejection', reason);
+    reportError(reason);
   });
 }
 
